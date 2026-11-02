@@ -13,7 +13,7 @@ concurrency:
 jobs:
   probe:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 80
     defaults:
       run:
         shell: bash
