@@ -16,6 +16,9 @@ jobs:
     timeout-minutes: 120
     env:
       SF_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      # Declared differences from the release build: the product's own explicit evidence-build marker (build.rs accepts a
+      # single loopback issuer only with it), a loopback trial issuer, CI trial keys, a WebView debug port (see inject script).
+      SF_PHASE4_RESTORE_EVIDENCE_BUILD: "1"
       SF_LICENSE_SERVICE_URL: "http://127.0.0.1:8787"
       SF_LICENSE_TRIAL_PUBLIC_KEYS: '{"ci-trial-key-v1":"ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ="}'
       SF_LICENSE_PERMANENT_PUBLIC_KEYS: '{"ci-permanent-key-v1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}'
