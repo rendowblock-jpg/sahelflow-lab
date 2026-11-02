@@ -60,21 +60,36 @@ try {
     await pins.nth(1).fill(PIN, { timeout: 10000 });
     await sleep(300);
     out.steps.push(await snap('setup-filled'));
+    out.t0Setup = Date.now();
     await page.getByRole('button', { name: /get started|commencer|ابدأ/i }).click({ timeout: 8000 });
+    await sleep(1500);
+    out.steps.push(await snap('setup-submitting', true));
   } catch (e) { out.steps.push({ step: 'setup-submit', error: String(e).slice(0, 300) }); }
-  await sleep(6000);
+  await page.waitForURL((u) => new URL(u).pathname !== '/setup', { timeout: 120000 }).catch(() => {});
+  out.setupSeconds = out.t0Setup ? Math.round((Date.now() - out.t0Setup) / 100) / 10 : null;
+  await sleep(2000);
   out.steps.push(await snap('after-setup', true));
   out.api.authStatusAfter = await api('/api/auth/status');
 
-  // 2. follow gates a few times
-  for (let i = 0; i < 4; i++) {
+  // 2. follow gates
+  for (let i = 0; i < 3; i++) {
     const path = new URL(page.url()).pathname;
-    out.gate.push({ i, path });
+    out.gate.push({ i, path, at: new Date().toISOString().slice(11, 19) });
     if (path.startsWith('/login')) {
-      try { await page.locator('input[type=password]').first().fill(PIN); await page.keyboard.press('Enter'); } catch {}
-      await sleep(5000); out.steps.push(await snap('after-login-' + i, true));
+      try {
+        await page.locator('input[inputmode=numeric]').first().fill(PIN, { timeout: 10000 });
+        const t1 = Date.now();
+        out.steps.push(await snap('login-filled'));
+        await page.getByRole('button', { name: /unlock|déverrouiller|فتح/i }).click({ timeout: 8000 });
+        await page.waitForURL((u) => !new URL(u).pathname.startsWith('/login'), { timeout: 90000 }).catch(() => {});
+        out.loginSeconds = Math.round((Date.now() - t1) / 100) / 10;
+      } catch (e) { out.steps.push({ step: 'login-error', error: String(e).slice(0, 300) }); }
+      await sleep(3000); out.steps.push(await snap('after-login-' + i, true));
+    } else if (path.startsWith('/setup')) {
+      await sleep(3000);
     } else break;
   }
+  out.steps.push(await snap('after-gates', true));
   out.api.licenseBefore = await api('/api/license/status');
   out.api.trial = await api('/api/license/trial', 'POST');
   await sleep(1500);
