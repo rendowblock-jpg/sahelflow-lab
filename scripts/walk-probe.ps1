@@ -15,6 +15,14 @@ if (-not $msi) { Write-Host "walk: fail (no msi)"; exit 1 }
 New-Item -ItemType Directory -Force -Path out/assets, out/shots | Out-Null
 Copy-Item $msi out/assets/
 & ./scripts/install-msi.ps1
+$issuer = Get-ChildItem $MsiDir -Recurse -Filter phase4-ci-trial-issuer.mjs | Select-Object -First 1
+$issuerUp = $false
+if ($issuer) {
+  Start-Process node -ArgumentList @($issuer.FullName, '--serve', '8787', '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20') -WindowStyle Hidden | Out-Null
+  Start-Sleep -Seconds 3
+  try { $h = Invoke-RestMethod 'http://127.0.0.1:8787/health' -TimeoutSec 3; $issuerUp = [bool]$h.ok } catch {}
+}
+Write-Host "walk: trial issuer up $issuerUp"
 $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $t0 = Get-Date
 $p = Start-Process -FilePath $exe -PassThru
@@ -27,9 +35,10 @@ while (((Get-Date) - $t0).TotalSeconds -lt 300) {
 }
 Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
 Start-Sleep -Seconds 3
-node scripts/walk-probe.mjs $Port
+node scripts/walk-probe2.mjs $Port
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
+Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*SahelFlow*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 4
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-Item out/assets -Recurse -Force -ErrorAction SilentlyContinue
