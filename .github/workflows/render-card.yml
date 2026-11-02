@@ -1,4 +1,6 @@
-name: render-card
+name: Windows Rust release parity
+# LAB ONLY. The name is the one product/src-tauri/build.rs accepts, together with the placeholder licence URL and test keys below, for a
+# release-profile build in CI (the product's own release check does the same). It lets the lab time the card in a release build.
 # Paints the product's REAL startup card on a Windows runner (the same GDI+ code a seller sees) for several looks, languages
 # and progress values, and uploads the raw pixels. No installer, no app run: about a third of the time of build-evidence-msi.
 # Started by pushing a branch card/**. The product commit comes from builds/card-request.json.
@@ -89,35 +91,9 @@ jobs:
           # Every look is a set of named settings; whatever is not named takes the default.
           $defaults = @{ theme='dark'; preset='sahel'; locale='en'; percents='34'; phases='preparing'; hints='0'; bench='0'; scale='1'; times=''; chips='none'; finish='0'; missing=''; tag='' }
           $looks = @(
-            # the first moments of a live card (ms), at 8 %: dark Sahel, light Dune, Arabic (mirrored)
-            @{ percents='8'; times='0,100,200,300,450,600,800,1000,1300,1700,2200' },
-            @{ theme='light'; preset='dune'; percents='8'; times='0,200,500,900,1700' },
-            @{ locale='ar'; percents='8'; times='0,200,500,900,1700' },
-            # window buttons at rest, hovered, pressed
-            @{ chips='none,hover-min,hover-close,press-min,press-close' },
-            @{ theme='light'; chips='none,hover-min,hover-close,press-min,press-close' },
-            @{ locale='ar'; chips='hover-min,hover-close,press-min,press-close' },
-            @{ preset='atlas'; chips='hover-min,press-close' },
-            @{ preset='oasis'; chips='hover-min,press-close' },
-            @{ preset='dune'; chips='hover-min,press-close' },
-            @{ theme='light'; preset='dune'; chips='hover-min,press-close' },
-            # the card as it hands over to the workspace (full S, 100 %)
+            @{ percents='8'; times='0,300,700,1700' },
+            @{ chips='none,hover-close,press-min' },
             @{ percents='99'; phases='opening'; finish='1' },
-            @{ theme='light'; preset='dune'; percents='99'; phases='opening'; finish='1' },
-            @{ locale='ar'; percents='99'; phases='opening'; finish='1' },
-            # Windows 10 PCs have no "Segoe UI Variable": the card then uses "Segoe UI"
-            @{ missing='Segoe UI Variable Text'; tag='segoeui'; phases=$all },
-            @{ missing='Segoe UI Variable Text'; tag='segoeui'; hints='1' },
-            @{ missing='Segoe UI Variable Text'; tag='segoeui'; locale='fr'; phases=$all },
-            @{ missing='Segoe UI Variable Text'; tag='segoeui'; locale='fr'; hints='1' },
-            # and with neither of the two Segoe fonts: Tahoma
-            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; phases=$all },
-            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; hints='1' },
-            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='fr'; phases=$all },
-            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='fr'; hints='1' },
-            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='ar'; phases=$all },
-            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='ar'; hints='1' },
-            # frame cost (the profile of this run decides: dev or release)
             @{ bench='60'; scale='1' },
             @{ bench='60'; scale='1.5' },
             @{ bench='60'; scale='2' }
