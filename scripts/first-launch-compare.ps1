@@ -42,6 +42,7 @@ function Install-Fresh([string]$msi) {
 function Run-Variant([string]$label, [string]$msi, [int]$launches) {
   Write-Host "variant: $label start"
   Install-Fresh $msi
+  & ./scripts/disk-bench.ps1
   & ./scripts/launch-observe.ps1 -Launches $launches -SettleSeconds 8 -MaxSeconds 240
   Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
@@ -95,9 +96,17 @@ if (-not $base -or -not $fix) { Write-Host "compare: fail (msi missing)"; exit 1
 if (Test-Path out) { Remove-Item out -Recurse -Force }
 & ./scripts/disk-bench.ps1
 Move-Item out res/diskbench
+# The dry run showed the same MSI taking 220 s, 37 s and 35 s on one runner (the first launch after a cold start is slow).
+# So: one discarded warm-up, then rounds that swap the order (fix first, base first, fix first ...).
+Run-Variant "warm" $base 1
 for ($i = 1; $i -le $Rounds; $i++) {
-  Run-Variant "base$i" $base 2
-  Run-Variant "fix$i" $fix 2
+  if (($i % 2) -eq 1) {
+    Run-Variant "fix$i" $fix 2
+    Run-Variant "base$i" $base 2
+  } else {
+    Run-Variant "base$i" $base 2
+    Run-Variant "fix$i" $fix 2
+  }
 }
 Crash-Drill $fix
 Remove-App

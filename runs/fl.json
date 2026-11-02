@@ -1,6 +1,5 @@
 {
   "baseline_run": 41409561319,
-  "fix_run": 41409561319,
-  "rounds": 1,
-  "note": "dry run: baseline against itself, to test the scripts"
+  "fix_run": 41539952078,
+  "rounds": 3
 }
