@@ -1,0 +1,6 @@
+{
+  "name": "sahelflow-lab",
+  "private": true,
+  "type": "module",
+  "dependencies": { "playwright-core": "^1.50.0" }
+}
