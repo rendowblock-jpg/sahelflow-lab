@@ -1,0 +1,103 @@
+name: render-card
+# Paints the product's REAL startup card on a Windows runner (the same GDI+ code a seller sees) for several looks, languages
+# and progress values, and uploads the raw pixels. No installer, no app run: about a third of the time of build-evidence-msi.
+# Started by pushing a branch card/**. The product commit comes from builds/card-request.json.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["card/**"]
+permissions:
+  contents: read
+concurrency:
+  group: card-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  render:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      SF_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SF_LICENSE_SERVICE_URL: "https://license.invalid"
+      SF_LICENSE_TRIAL_PUBLIC_KEYS: '{"ci-trial-key-v1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+      SF_LICENSE_PERMANENT_PUBLIC_KEYS: '{"ci-permanent-key-v1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read request
+        id: req
+        shell: bash
+        run: |
+          echo "repo=$(node -p 'require("./builds/card-request.json").repo')" >> "$GITHUB_OUTPUT"
+          echo "ref=$(node -p 'require("./builds/card-request.json").ref')" >> "$GITHUB_OUTPUT"
+          echo "request: ok"
+      - name: Check out the product
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.req.outputs.repo }}
+          ref: ${{ steps.req.outputs.ref }}
+          path: product
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            product/src-tauri/target
+          key: ${{ runner.os }}-cargo-card-${{ hashFiles('product/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-card-
+      - name: Prepare what the product test build needs (same steps as its Windows Rust parity workflow)
+        shell: pwsh
+        working-directory: product
+        run: |
+          bun run scripts/sync-cargo-root-lock.ts
+          if ($LASTEXITCODE -ne 0) { throw 'sync failed' }
+          bun install --frozen-lockfile --linker=hoisted
+          if ($LASTEXITCODE -ne 0) { throw 'install failed' }
+          bunx prisma generate
+          if ($LASTEXITCODE -ne 0) { throw 'prisma failed' }
+          bun run scripts/prepare-runtime.ts
+          if ($LASTEXITCODE -ne 0) { throw 'runtime failed' }
+          bun run build:sidecar
+          if ($LASTEXITCODE -ne 0) { throw 'sidecar failed' }
+          ./scripts/prepare-libsodium-windows.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'libsodium failed' }
+      - name: Build the test binary
+        shell: pwsh
+        working-directory: product
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Paint the card
+        shell: pwsh
+        working-directory: product
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'card'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $env:SF_CARD_PREVIEW_DIR = $out
+          # theme, preset, locale, percents
+          $looks = @(
+            @('dark','sahel','en','8,34,72,99'),
+            @('dark','sahel','fr','34'),
+            @('dark','sahel','ar','34,99'),
+            @('light','sahel','en','34'),
+            @('dark','atlas','en','34'),
+            @('dark','oasis','en','34'),
+            @('dark','dune','en','34')
+          )
+          foreach ($l in $looks) {
+            $env:SF_CARD_THEME = $l[0]; $env:SF_CARD_PRESET = $l[1]; $env:SF_CARD_LOCALE = $l[2]; $env:SF_CARD_PERCENTS = $l[3]
+            Write-Host "== $($l -join ' ')"
+            cargo test --manifest-path src-tauri/Cargo.toml --lib --locked render_the_card_for_a_picture -- --ignored --nocapture --test-threads=1
+            if ($LASTEXITCODE -ne 0) { Write-Host "render failed for $($l -join ' ')"; exit $LASTEXITCODE }
+          }
+          Get-ChildItem $out -Filter *.bgra | ForEach-Object { Write-Host ("{0} {1}" -f $_.Name, $_.Length) }
+      - name: Upload the pictures
+        uses: actions/upload-artifact@v4
+        with:
+          name: card-${{ github.run_id }}
+          path: ${{ runner.temp }}/card/*.bgra
+          retention-days: 7
