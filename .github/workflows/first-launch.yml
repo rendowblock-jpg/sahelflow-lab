@@ -1,0 +1,69 @@
+name: first-launch
+# Compares first-launch time of two evidence MSIs (builds/ artifacts of build-evidence-msi runs) on ONE runner, alternating clean
+# installs, plus a kill-during-migration drill on the second MSI. Started by pushing a branch fl/** with runs/fl.json.
+on:
+  push:
+    branches: ["fl/**"]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fl-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  compare:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read request
+        id: req
+        run: |
+          echo "base=$(node -p 'require("./runs/fl.json").baseline_run')" >> "$GITHUB_OUTPUT"
+          echo "fix=$(node -p 'require("./runs/fl.json").fix_run')" >> "$GITHUB_OUTPUT"
+          echo "rounds=$(node -p 'require("./runs/fl.json").rounds||2')" >> "$GITHUB_OUTPUT"
+          echo "request: ok"
+      - name: Lint PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errs = $null; $tok = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tok, [ref]$errs)
+            if ($errs.Count -gt 0) { $bad++; Write-Host "lint: fail $($_.Name): $($errs[0].Message) line $($errs[0].Extent.StartLineNumber)" }
+          }
+          if ($bad -gt 0) { exit 1 }
+          Write-Host "lint: ok"
+      - name: Probe machine
+        shell: pwsh
+        run: ./scripts/probe-machine.ps1
+      - name: Download baseline MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: evidence-msi-${{ steps.req.outputs.base }}
+          run-id: ${{ steps.req.outputs.base }}
+          github-token: ${{ github.token }}
+          path: msi-base
+      - name: Download fix MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: evidence-msi-${{ steps.req.outputs.fix }}
+          run-id: ${{ steps.req.outputs.fix }}
+          github-token: ${{ github.token }}
+          path: msi-fix
+      - name: Compare first launches
+        shell: pwsh
+        run: ./scripts/first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds ${{ steps.req.outputs.rounds }}
+      - name: Pack and encrypt results
+        if: always()
+        run: bash scripts/pack-encrypt.sh
+      - name: Upload encrypted results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-results-${{ github.run_id }}
+          path: out/results.enc
+          retention-days: 14
