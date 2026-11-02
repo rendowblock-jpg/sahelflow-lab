@@ -28,6 +28,7 @@ jobs:
         run: |
           echo "repo=$(node -p 'require("./builds/card-request.json").repo')" >> "$GITHUB_OUTPUT"
           echo "ref=$(node -p 'require("./builds/card-request.json").ref')" >> "$GITHUB_OUTPUT"
+          echo "profile=$(node -p '(require("./builds/card-request.json").profile||"dev")')" >> "$GITHUB_OUTPUT"
           echo "request: ok"
       - name: Check out the product
         uses: actions/checkout@v4
@@ -47,8 +48,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             product/src-tauri/target
-          key: ${{ runner.os }}-cargo-card-${{ hashFiles('product/src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-card-
+          key: ${{ runner.os }}-cargo-card-${{ steps.req.outputs.profile }}-${{ hashFiles('product/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-card-${{ steps.req.outputs.profile }}-
       - name: Prepare what the product test build needs (same steps as its Windows Rust parity workflow)
         shell: pwsh
         working-directory: product
@@ -68,39 +69,68 @@ jobs:
       - name: Build the test binary
         shell: pwsh
         working-directory: product
+        env:
+          PROFILE_FLAG: ${{ steps.req.outputs.profile == 'release' && '--release' || '' }}
         run: |
-          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --no-run
+          $extra = @(); if ($env:PROFILE_FLAG) { $extra = @($env:PROFILE_FLAG) }
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked @extra --no-run
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Paint the card
         shell: pwsh
         working-directory: product
+        env:
+          PROFILE_FLAG: ${{ steps.req.outputs.profile == 'release' && '--release' || '' }}
         run: |
+          $extra = @(); if ($env:PROFILE_FLAG) { $extra = @($env:PROFILE_FLAG) }
           $out = Join-Path $env:RUNNER_TEMP 'card'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $env:SF_CARD_PREVIEW_DIR = $out
-          # theme, preset, locale, percents, phases, hints (1 = slow-start sentence showing), bench frames
           $all = 'preparing,starting,retrying,opening'
-          # theme, preset, locale, percents, phases, hints, bench frames, SCALE (1 = 100 %)
-          # theme, preset, locale, percents, phases, hints, bench frames, SCALE (1 = 100 %)
+          # Every look is a set of named settings; whatever is not named takes the default.
+          $defaults = @{ theme='dark'; preset='sahel'; locale='en'; percents='34'; phases='preparing'; hints='0'; bench='0'; scale='1'; times=''; chips='none'; finish='0'; missing=''; tag='' }
           $looks = @(
-            @('dark','sahel','en','34','preparing','0','0','1'),
-            @('dark','sahel','en','34','preparing','0','0','1.5'),
-            @('dark','sahel','en','34','preparing','0','0','2'),
-            @('dark','sahel','en','72','preparing','0','0','2'),
-            @('dark','sahel','en','34','preparing','0','0','3'),
-            @('light','sahel','en','34','preparing','0','0','2'),
-            @('dark','atlas','en','34','preparing','0','0','2'),
-            @('dark','oasis','en','34','preparing','0','0','2'),
-            @('dark','dune','en','34','preparing','0','0','2'),
-            @('light','dune','en','34','preparing','0','0','2'),
-            @('dark','sahel','ar','34','preparing,starting,retrying,opening','0','0','2')
+            # the first moments of a live card (ms), at 8 %: dark Sahel, light Dune, Arabic (mirrored)
+            @{ percents='8'; times='0,100,200,300,450,600,800,1000,1300,1700,2200' },
+            @{ theme='light'; preset='dune'; percents='8'; times='0,200,500,900,1700' },
+            @{ locale='ar'; percents='8'; times='0,200,500,900,1700' },
+            # window buttons at rest, hovered, pressed
+            @{ chips='none,hover-min,hover-close,press-min,press-close' },
+            @{ theme='light'; chips='none,hover-min,hover-close,press-min,press-close' },
+            @{ locale='ar'; chips='hover-min,hover-close,press-min,press-close' },
+            @{ preset='atlas'; chips='hover-min,press-close' },
+            @{ preset='oasis'; chips='hover-min,press-close' },
+            @{ preset='dune'; chips='hover-min,press-close' },
+            @{ theme='light'; preset='dune'; chips='hover-min,press-close' },
+            # the card as it hands over to the workspace (full S, 100 %)
+            @{ percents='99'; phases='opening'; finish='1' },
+            @{ theme='light'; preset='dune'; percents='99'; phases='opening'; finish='1' },
+            @{ locale='ar'; percents='99'; phases='opening'; finish='1' },
+            # Windows 10 PCs have no "Segoe UI Variable": the card then uses "Segoe UI"
+            @{ missing='Segoe UI Variable Text'; tag='segoeui'; phases=$all },
+            @{ missing='Segoe UI Variable Text'; tag='segoeui'; hints='1' },
+            @{ missing='Segoe UI Variable Text'; tag='segoeui'; locale='fr'; phases=$all },
+            @{ missing='Segoe UI Variable Text'; tag='segoeui'; locale='fr'; hints='1' },
+            # and with neither of the two Segoe fonts: Tahoma
+            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; phases=$all },
+            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; hints='1' },
+            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='fr'; phases=$all },
+            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='fr'; hints='1' },
+            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='ar'; phases=$all },
+            @{ missing='Segoe UI Variable Text,Segoe UI'; tag='tahoma'; locale='ar'; hints='1' },
+            # frame cost (the profile of this run decides: dev or release)
+            @{ bench='60'; scale='1' },
+            @{ bench='60'; scale='1.5' },
+            @{ bench='60'; scale='2' }
           )
           foreach ($l in $looks) {
-            $env:SF_CARD_THEME = $l[0]; $env:SF_CARD_PRESET = $l[1]; $env:SF_CARD_LOCALE = $l[2]
-            $env:SF_CARD_PERCENTS = $l[3]; $env:SF_CARD_PHASES = $l[4]; $env:SF_CARD_HINT = $l[5]; $env:SF_CARD_BENCH = $l[6]; $env:SF_CARD_SCALE = $l[7]
-            Write-Host "== $($l -join ' | ')"
-            cargo test --manifest-path src-tauri/Cargo.toml --lib --locked render_the_card_for_a_picture -- --ignored --nocapture --test-threads=1
-            if ($LASTEXITCODE -ne 0) { Write-Host "render failed for $($l -join ' ')"; exit $LASTEXITCODE }
+            $c = $defaults.Clone(); foreach ($k in $l.Keys) { $c[$k] = $l[$k] }
+            $env:SF_CARD_THEME = $c.theme; $env:SF_CARD_PRESET = $c.preset; $env:SF_CARD_LOCALE = $c.locale
+            $env:SF_CARD_PERCENTS = $c.percents; $env:SF_CARD_PHASES = $c.phases; $env:SF_CARD_HINT = $c.hints
+            $env:SF_CARD_BENCH = $c.bench; $env:SF_CARD_SCALE = $c.scale; $env:SF_CARD_TIMES = $c.times
+            $env:SF_CARD_CHIPS = $c.chips; $env:SF_CARD_FINISH = $c.finish; $env:SF_CARD_FONT_MISSING = $c.missing; $env:SF_CARD_TAG = $c.tag
+            Write-Host "== $(($c.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' ')"
+            cargo test --manifest-path src-tauri/Cargo.toml --lib --locked @extra render_the_card_for_a_picture -- --ignored --nocapture --test-threads=1
+            if ($LASTEXITCODE -ne 0) { Write-Host "render failed"; exit $LASTEXITCODE }
           }
           Get-ChildItem $out -Include *.bgra,*.txt -Recurse | ForEach-Object { Write-Host ("{0} {1}" -f $_.Name, $_.Length) }
       - name: Upload the pictures
