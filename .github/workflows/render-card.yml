@@ -81,19 +81,19 @@ jobs:
           # theme, preset, locale, percents, phases, hints (1 = slow-start sentence showing), bench frames
           $all = 'preparing,starting,retrying,opening'
           # theme, preset, locale, percents, phases, hints, bench frames, SCALE (1 = 100 %)
+          # theme, preset, locale, percents, phases, hints, bench frames, SCALE (1 = 100 %)
           $looks = @(
-            @('dark','sahel','en','72','preparing','0,1','0','1.25'),
-            @('dark','sahel','en','72','preparing','0,1','0','1.5'),
-            @('dark','sahel','en','72','preparing','0,1','0','1.75'),
-            @('dark','sahel','en','72','preparing','0,1','0','2'),
+            @('dark','sahel','en','34','preparing','0','0','1'),
+            @('dark','sahel','en','34','preparing','0','0','1.5'),
+            @('dark','sahel','en','34','preparing','0','0','2'),
+            @('dark','sahel','en','72','preparing','0','0','2'),
             @('dark','sahel','en','34','preparing','0','0','3'),
-            @('dark','sahel','fr','34','preparing,opening','1','0','1.5'),
-            @('dark','sahel','fr','34','preparing','1','0','2'),
-            @('dark','sahel','ar','34','preparing','1','0','1.5'),
-            @('dark','sahel','ar','34','preparing','1','0','2'),
-            @('light','sahel','en','34','preparing','0','0','1.5'),
-            @('dark','sahel','en','34','preparing','0','40','1.5'),
-            @('dark','sahel','en','34','preparing','0','40','2')
+            @('light','sahel','en','34','preparing','0','0','2'),
+            @('dark','atlas','en','34','preparing','0','0','2'),
+            @('dark','oasis','en','34','preparing','0','0','2'),
+            @('dark','dune','en','34','preparing','0','0','2'),
+            @('light','dune','en','34','preparing','0','0','2'),
+            @('dark','sahel','ar','34','preparing,starting,retrying,opening','0','0','2')
           )
           foreach ($l in $looks) {
             $env:SF_CARD_THEME = $l[0]; $env:SF_CARD_PRESET = $l[1]; $env:SF_CARD_LOCALE = $l[2]
