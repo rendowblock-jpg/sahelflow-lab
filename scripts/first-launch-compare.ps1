@@ -1,7 +1,7 @@
 # usage: first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds 2
 # One runner, alternating clean installs: base, fix, base, fix ... then a crash drill on the fix build.
 # Per variant: uninstall + wipe app data, install, launch-observe (2 launches: first and repeat), DB check. Public log: durations only.
-param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2)
+param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1)
 $ErrorActionPreference = 'Continue'
 $dataRoots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
 $exe = Join-Path $env:ProgramFiles 'SahelFlow\sahelflow.exe'
@@ -98,7 +98,7 @@ if (Test-Path out) { Remove-Item out -Recurse -Force }
 Move-Item out res/diskbench
 # The dry run showed the same MSI taking 220 s, 37 s and 35 s on one runner (the first launch after a cold start is slow).
 # So: one discarded warm-up, then rounds that swap the order (fix first, base first, fix first ...).
-Run-Variant "warm" $base 1
+if ($Warm -eq 1) { Run-Variant "warm" $base 1 }
 for ($i = 1; $i -le $Rounds; $i++) {
   if (($i % 2) -eq 1) {
     Run-Variant "fix$i" $fix 2

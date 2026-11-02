@@ -25,6 +25,7 @@ jobs:
           echo "base=$(node -p 'require("./runs/fl.json").baseline_run')" >> "$GITHUB_OUTPUT"
           echo "fix=$(node -p 'require("./runs/fl.json").fix_run')" >> "$GITHUB_OUTPUT"
           echo "rounds=$(node -p 'require("./runs/fl.json").rounds||2')" >> "$GITHUB_OUTPUT"
+          echo "warm=$(node -p 'require("./runs/fl.json").warm===0?0:1')" >> "$GITHUB_OUTPUT"
           echo "request: ok"
       - name: Lint PowerShell scripts
         shell: pwsh
@@ -56,7 +57,7 @@ jobs:
           path: msi-fix
       - name: Compare first launches
         shell: pwsh
-        run: ./scripts/first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds ${{ steps.req.outputs.rounds }}
+        run: ./scripts/first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds ${{ steps.req.outputs.rounds }} -Warm ${{ steps.req.outputs.warm }}
       - name: Pack and encrypt results
         if: always()
         run: bash scripts/pack-encrypt.sh
