@@ -29,6 +29,17 @@ jobs:
           if [ -z "$TAG" ] && [ -f runs/current.json ]; then TAG=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("runs/current.json","utf8")).release_tag||"")'); fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "request: ok"
+      - name: Lint PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errs = $null; $tok = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tok, [ref]$errs)
+            if ($errs.Count -gt 0) { $bad++; Write-Host "lint: fail $($_.Name): $($errs[0].Message) line $($errs[0].Extent.StartLineNumber)" }
+          }
+          if ($bad -gt 0) { exit 1 }
+          Write-Host "lint: ok"
       - name: Probe machine
         shell: pwsh
         run: ./scripts/probe-machine.ps1
@@ -43,6 +54,9 @@ jobs:
       - name: Install MSI
         shell: pwsh
         run: ./scripts/install-msi.ps1
+      - name: Disk benchmark
+        shell: pwsh
+        run: ./scripts/disk-bench.ps1
       - name: Launch and observe
         shell: pwsh
         run: ./scripts/launch-observe.ps1

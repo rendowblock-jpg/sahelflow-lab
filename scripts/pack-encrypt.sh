@@ -5,7 +5,8 @@ mkdir -p out
 echo "$(date -u +%s)-$RANDOM ${GITHUB_RUN_ID:-local}" > out/canary.txt
 CAN=$(sha256sum out/canary.txt | cut -d' ' -f1)
 tar -czf results.tgz --exclude='out/assets' --exclude='out/results.enc' out || { echo "pack: fail (tar)"; exit 1; }
-openssl rand -hex 32 > key.txt
+# strip CR/LF: a Windows openssl writes CRLF, which broke decryption in lab run 1
+openssl rand -hex 32 | tr -d '\r\n' > key.txt
 openssl pkeyutl -encrypt -pubin -inkey keys/lab_results_public.pem -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -in key.txt -out key.rsa || { echo "pack: fail (wrap)"; exit 1; }
 openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:key.txt -in results.tgz -out payload.enc || { echo "pack: fail (enc)"; exit 1; }
 cat key.rsa payload.enc > out/results.enc

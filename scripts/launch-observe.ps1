@@ -1,10 +1,15 @@
-# Launches the installed app, samples processes, tries the WebView2 debug port, closes it and checks for leftovers.
-# Public log: only ok/fail lines. All detail goes to out/*.json (encrypted later).
-param([int]$Port = 9222, [int]$MaxSeconds = 240, [int]$SettleSeconds = 60)
+# Launches the installed app (twice), samples processes/IO/network, waits for the app's own "ui-ready" trace stage,
+# takes OS screenshots, closes it like a user, checks leftovers. Public log: ok/fail + durations only.
+param([int]$Port = 9222, [int]$MaxSeconds = 300, [int]$SettleSeconds = 30, [int]$Launches = 2)
 $ErrorActionPreference = 'Continue'
-New-Item -ItemType Directory -Force -Path out/shots | Out-Null
+New-Item -ItemType Directory -Force -Path out/shots, out/launch | Out-Null
 $exe = Join-Path $env:ProgramFiles 'SahelFlow\sahelflow.exe'
 if (-not (Test-Path $exe)) { Write-Host "launch: fail (no exe)"; exit 1 }
+$names = @('sahelflow', 'node', 'sahelflow-whatsapp', 'msedgewebview2')
+$dataRoots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
+$script:tick = 0
+$script:shot = @{}
+
 function Save-Screen($path) {
   try {
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -15,53 +20,108 @@ function Save-Screen($path) {
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose(); return $true
   } catch { return "$_" }
 }
-function Sample($t0) {
+function Get-Trace {
+  foreach ($r in $dataRoots) {
+    $p = Join-Path $r 'startup-trace.json'
+    if (Test-Path $p) { try { return (Get-Content $p -Raw | ConvertFrom-Json) } catch {} }
+  }
+  return $null
+}
+function Sample($t0, $label) {
   $el = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
-  $procs = @(Get-Process -Name sahelflow, node, sahelflow-whatsapp, msedgewebview2 -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -ne 'node' -or ($_.Path -like '*SahelFlow*') } | ForEach-Object {
-    [ordered]@{ n = $_.ProcessName; id = $_.Id; wsMB = [math]::Round($_.WorkingSet64/1MB, 1); privMB = [math]::Round($_.PrivateMemorySize64/1MB, 1); handles = $_.HandleCount; threads = $_.Threads.Count; cpuS = [math]::Round([double]$_.CPU, 2) } })
-  Add-Content out/procs.jsonl ((@{ t = $el; procs = $procs } | ConvertTo-Json -Depth 4 -Compress))
+  $ps = @(Get-Process -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -ne 'node' -or ($_.Path -like '*SahelFlow*') })
+  $procs = @($ps | ForEach-Object {
+    [ordered]@{ n = $_.ProcessName; id = $_.Id; wsMB = [math]::Round($_.WorkingSet64 / 1MB, 1); privMB = [math]::Round($_.PrivateMemorySize64 / 1MB, 1); handles = $_.HandleCount; threads = $_.Threads.Count; cpuS = [math]::Round([double]$_.CPU, 2) } })
+  $io = [ordered]@{}
+  try {
+    Get-CimInstance Win32_Process -Filter "Name='sahelflow.exe' OR Name='node.exe' OR Name='sahelflow-whatsapp.exe'" -ErrorAction Stop | ForEach-Object {
+      $io["$($_.Name):$($_.ProcessId)"] = @([int64]$_.ReadOperationCount, [int64]$_.WriteOperationCount, [int64]$_.ReadTransferCount, [int64]$_.WriteTransferCount) }
+  } catch {}
+  $net = @()
+  if (($script:tick % 4) -eq 0) {
+    try {
+      $ids = @($ps | Where-Object { $_.ProcessName -in 'sahelflow', 'node', 'sahelflow-whatsapp' } | ForEach-Object { $_.Id })
+      $net = @(Get-NetTCPConnection -ErrorAction Stop | Where-Object { $ids -contains $_.OwningProcess } | ForEach-Object { "$($_.OwningProcess) $($_.State) $($_.LocalPort)->$($_.RemoteAddress):$($_.RemotePort)" })
+    } catch {}
+  }
+  $script:tick++
+  Add-Content out/procs.jsonl ((@{ l = $label; t = $el; procs = $procs; io = $io; net = $net } | ConvertTo-Json -Depth 5 -Compress))
   return $el
 }
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port --remote-allow-origins=*"
-$t0 = Get-Date
-$p = Start-Process -FilePath $exe -PassThru
-$tl = [ordered]@{ startedUtc = $t0.ToUniversalTime().ToString('o'); pid = $p.Id }
-$cdp = $false; $pageSeen = $false
-while (((Get-Date) - $t0).TotalSeconds -lt $MaxSeconds) {
-  $el = Sample $t0
-  if (-not $tl.Contains('windowAt')) { $m = Get-Process -Name sahelflow -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; if ($m) { $tl.windowAt = $el; $tl.windowTitle = $m.MainWindowTitle } }
-  if (-not $cdp) { try { $v = Invoke-RestMethod "http://127.0.0.1:$Port/json/version" -TimeoutSec 2; $cdp = $true; $tl.cdpAt = $el; $tl.cdpBrowser = $v.Browser } catch {} }
-  if ($cdp -and -not $pageSeen) { try { $l = Invoke-RestMethod "http://127.0.0.1:$Port/json/list" -TimeoutSec 2; $pg = $l | Where-Object { $_.type -eq 'page' -and $_.url -like 'http://127.0.0.1:*' } | Select-Object -First 1; if ($pg) { $pageSeen = $true; $tl.pageAt = $el; $tl.pageUrl = ($pg.url -replace '\?.*', ''); $tl.pageTitle = $pg.title } } catch {} }
-  if ($pageSeen) { break }
-  if ($p.HasExited -and -not (Get-Process -Name sahelflow -ErrorAction SilentlyContinue)) { $tl.exitedEarlyAt = $el; break }
-  Start-Sleep -Seconds 1
+function Wait-Ready($t0, $startMs, $label, $max) {
+  while (((Get-Date) - $t0).TotalSeconds -lt $max) {
+    $el = Sample $t0 $label
+    if ($label -eq 'L1') {
+      foreach ($at in 5, 35) { if ($el -ge $at -and -not $script:shot.ContainsKey($at)) { $script:shot[$at] = Save-Screen "out/shots/l1-at$at.png" } }
+    }
+    $tr = Get-Trace
+    if ($tr -and $tr.events -and $tr.events.Count -gt 0 -and $tr.events[0].createdAtUnixMilliseconds -ge ($startMs - 5000)) {
+      if ($tr.events | Where-Object { $_.stage -eq 'ui-ready' }) { return $true }
+    }
+    if (-not (Get-Process -Name sahelflow -ErrorAction SilentlyContinue)) { return $false }
+    Start-Sleep -Milliseconds 800
+  }
+  return $false
 }
-$tl.cdpUp = $cdp; $tl.pageSeen = $pageSeen
-# settle: keep sampling memory every 2 s
-$s0 = Get-Date
-while (((Get-Date) - $s0).TotalSeconds -lt $SettleSeconds) { [void](Sample $t0); Start-Sleep -Seconds 2 }
-$tl.screenOs = Save-Screen 'out/shots/os-desktop.png'
-if ($cdp) { & node scripts/cdp-probe.mjs $Port 2>&1 | Out-Null } else { '{"ok":false,"error":"cdp-not-up"}' | Set-Content out/cdp.json }
-[void](Sample $t0)
-# app data: names/sizes of everything, content only of an allow-list (never databases, keys, whatsapp auth)
+
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port --remote-allow-origins=*"
+$allStart = Get-Date
+$records = @()
+$okCount = 0
+for ($n = 1; $n -le $Launches; $n++) {
+  $label = "L$n"
+  $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $t0 = Get-Date
+  $p = Start-Process -FilePath $exe -PassThru
+  $rec = [ordered]@{ launch = $n; startedUtc = $t0.ToUniversalTime().ToString('o'); pid = $p.Id }
+  $ready = Wait-Ready $t0 $startMs $label $MaxSeconds
+  $rec.ready = $ready
+  $rec.readyAtS = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+  $w = Get-Process -Name sahelflow -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+  $rec.windowTitle = if ($w) { $w.MainWindowTitle } else { $null }
+  $rec.screenReady = Save-Screen "out/shots/l$n-ready.png"
+  try { $v = Invoke-RestMethod "http://127.0.0.1:$Port/json/version" -TimeoutSec 2; $rec.cdpUp = $true; $rec.cdpBrowser = $v.Browser } catch { $rec.cdpUp = $false }
+  $s0 = Get-Date
+  while (((Get-Date) - $s0).TotalSeconds -lt $SettleSeconds) { [void](Sample $t0 $label); Start-Sleep -Seconds 2 }
+  $rec.screenSettled = Save-Screen "out/shots/l$n-settled.png"
+  foreach ($r in $dataRoots) {
+    if (Test-Path $r) {
+      Get-ChildItem $r -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out/launch' "l$n-$($_.Name)") -ErrorAction SilentlyContinue }
+    }
+  }
+  # close like a user would
+  $c0 = Get-Date
+  $rec.closeRequested = (@(Get-Process -Name sahelflow -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() }) -contains $true)
+  $exited = $false
+  while (((Get-Date) - $c0).TotalSeconds -lt 40) { if (-not (Get-Process -Name sahelflow -ErrorAction SilentlyContinue)) { $exited = $true; break }; Start-Sleep -Milliseconds 500 }
+  $rec.closeSeconds = [math]::Round(((Get-Date) - $c0).TotalSeconds, 1)
+  $rec.exitedAfterClose = $exited
+  Start-Sleep -Seconds 5
+  $left = @(Get-Process -Name sahelflow, sahelflow-whatsapp, msedgewebview2 -ErrorAction SilentlyContinue) + @(Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*SahelFlow*' })
+  $rec.leftoverAfterClose = @($left | ForEach-Object { $_.ProcessName })
+  Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  if ($ready) { $okCount++ }
+  $records += , $rec
+  Start-Sleep -Seconds 3
+}
+$records | ConvertTo-Json -Depth 5 | Set-Content out/timeline.json
+
+# app data: names and sizes of everything (no content except an allow-list of diagnostics)
 $tree = New-Object System.Collections.Generic.List[string]
-foreach ($root in @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))) {
+foreach ($root in $dataRoots) {
   if (Test-Path $root) {
-    Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch 'node-compile-cache|EBWebView' } | ForEach-Object {
       $rel = $_.FullName.Substring($root.Length); $tree.Add("$($_.Length)`t$rel")
-      if ($_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$|\.log$' -and $_.Length -lt 2MB -and $rel -notmatch 'whatsapp|auth|secret|key') {
-        $dest = Join-Path 'out/appdata' ($rel.TrimStart('\') -replace '[\\/:]', '_'); New-Item -ItemType Directory -Force -Path out/appdata | Out-Null; Copy-Item $_.FullName $dest -ErrorAction SilentlyContinue
+      if ($rel -match 'migration-journal' -and $_.Name -like '*.json' -and $_.Length -lt 200KB) {
+        New-Item -ItemType Directory -Force -Path out/appdata | Out-Null
+        Copy-Item $_.FullName (Join-Path 'out/appdata' ($rel.TrimStart('\') -replace '[\\/:]', '_')) -ErrorAction SilentlyContinue
       }
     }
   }
 }
 $tree | Set-Content out/appdata-tree.txt
-try { Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $t0 } -ErrorAction Stop | Where-Object { $_.LevelDisplayName -in 'Error', 'Warning' } | Select-Object -First 60 TimeCreated, ProviderName, Id, LevelDisplayName, @{n = 'Msg'; e = { ($_.Message -replace '\s+', ' ').Substring(0, [math]::Min(400, $_.Message.Length)) } } | ConvertTo-Json | Set-Content out/eventlog.json } catch { "none: $_" | Set-Content out/eventlog.json }
-# close like a user would, then look for leftovers (child containment)
-$tl.closeRequested = (Get-Process -Name sahelflow -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() }) -contains $true
-Start-Sleep -Seconds 20
-$left = @(Get-Process -Name sahelflow, sahelflow-whatsapp, msedgewebview2 -ErrorAction SilentlyContinue) + @(Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*SahelFlow*' })
-$tl.leftoverAfterClose = @($left | ForEach-Object { $_.ProcessName })
-$tl | ConvertTo-Json -Depth 4 | Set-Content out/timeline.json
-Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-if ($pageSeen) { Write-Host "launch: ok (page at $($tl.pageAt) s)" } elseif ($tl.Contains('windowAt')) { Write-Host "launch: partial (window at $($tl.windowAt) s, no page via debug port)" } else { Write-Host "launch: fail (no window)"; exit 1 }
+$ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $allStart } -ErrorAction SilentlyContinue | Where-Object { $_.LevelDisplayName -in 'Error', 'Warning' } | Select-Object -First 80 TimeCreated, ProviderName, Id, LevelDisplayName, @{ n = 'Msg'; e = { $m = ($_.Message -replace '\s+', ' '); $m.Substring(0, [math]::Min(300, $m.Length)) } })
+if ($ev.Count -eq 0) { '[]' | Set-Content out/eventlog.json } else { $ev | ConvertTo-Json | Set-Content out/eventlog.json }
+
+$summary = ($records | ForEach-Object { "L$($_.launch) " + $(if ($_.ready) { "ready at $($_.readyAtS) s" } else { 'NOT ready' }) }) -join ', '
+if ($okCount -ge 1) { Write-Host "launch: ok ($summary)" } else { Write-Host "launch: fail ($summary)"; exit 1 }
