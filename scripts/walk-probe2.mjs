@@ -53,8 +53,11 @@ try {
 
   // 1. owner PIN through the real form
   try {
-    await page.locator('input[name=pin]').fill(PIN);
-    await page.locator('input[name=confirmPin]').fill(PIN);
+    const pins = page.locator('input[inputmode=numeric]');
+    out.pinInputs = await pins.count();
+    out.inputAttrs = await page.evaluate(() => [...document.querySelectorAll('input')].map((e) => ({ t: e.type, n: e.name, id: e.id, im: e.inputMode, ac: e.autocomplete })));
+    await pins.nth(0).fill(PIN, { timeout: 10000 });
+    await pins.nth(1).fill(PIN, { timeout: 10000 });
     await sleep(300);
     out.steps.push(await snap('setup-filled'));
     await page.getByRole('button', { name: /get started|commencer|ابدأ/i }).click({ timeout: 8000 });
