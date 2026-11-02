@@ -1,0 +1,61 @@
+name: walk-probe
+# Installs an evidence MSI (artifact of a build-evidence-msi run), starts it, attaches over the debug port and records what the app
+# shows and where routes lead. Started by pushing a branch wp/** with runs/wp.json.
+on:
+  push:
+    branches: ["wp/**"]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: wp-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read request
+        id: req
+        run: |
+          echo "msi=$(node -p 'require("./runs/wp.json").msi_run')" >> "$GITHUB_OUTPUT"
+          echo "request: ok"
+      - name: Lint PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errs = $null; $tok = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tok, [ref]$errs)
+            if ($errs.Count -gt 0) { $bad++; Write-Host "lint: fail $($_.Name): $($errs[0].Message) line $($errs[0].Extent.StartLineNumber)" }
+          }
+          if ($bad -gt 0) { exit 1 }
+          Write-Host "lint: ok"
+      - name: Install lab tools
+        run: |
+          npm install --no-audit --no-fund --silent
+          echo "tools: ok"
+      - name: Download MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: evidence-msi-${{ steps.req.outputs.msi }}
+          run-id: ${{ steps.req.outputs.msi }}
+          github-token: ${{ github.token }}
+          path: msi-base
+      - name: Probe
+        shell: pwsh
+        run: ./scripts/walk-probe.ps1 -MsiDir msi-base
+      - name: Pack and encrypt results
+        if: always()
+        run: bash scripts/pack-encrypt.sh
+      - name: Upload encrypted results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-results-${{ github.run_id }}
+          path: out/results.enc
+          retention-days: 14
