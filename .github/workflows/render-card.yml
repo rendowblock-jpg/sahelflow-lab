@@ -78,26 +78,31 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'card'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $env:SF_CARD_PREVIEW_DIR = $out
-          # theme, preset, locale, percents
+          # theme, preset, locale, percents, phases, hints (1 = slow-start sentence showing), bench frames
+          $all = 'preparing,starting,retrying,opening'
           $looks = @(
-            @('dark','sahel','en','8,34,72,99'),
-            @('dark','sahel','fr','34'),
-            @('dark','sahel','ar','34,99'),
-            @('light','sahel','en','34'),
-            @('dark','atlas','en','34'),
-            @('dark','oasis','en','34'),
-            @('dark','dune','en','34')
+            @('dark','sahel','en','8,34,72,99',$all,'0,1','60'),
+            @('dark','sahel','fr','34',$all,'0,1','0'),
+            @('dark','sahel','ar','34',$all,'0,1','60'),
+            @('light','sahel','en','34','preparing,opening','0,1','0'),
+            @('light','sahel','ar','34','preparing','0','0'),
+            @('dark','atlas','en','34','preparing','0','0'),
+            @('dark','oasis','en','34','preparing','0','0'),
+            @('dark','dune','en','34','preparing','0','0')
           )
           foreach ($l in $looks) {
-            $env:SF_CARD_THEME = $l[0]; $env:SF_CARD_PRESET = $l[1]; $env:SF_CARD_LOCALE = $l[2]; $env:SF_CARD_PERCENTS = $l[3]
-            Write-Host "== $($l -join ' ')"
+            $env:SF_CARD_THEME = $l[0]; $env:SF_CARD_PRESET = $l[1]; $env:SF_CARD_LOCALE = $l[2]
+            $env:SF_CARD_PERCENTS = $l[3]; $env:SF_CARD_PHASES = $l[4]; $env:SF_CARD_HINT = $l[5]; $env:SF_CARD_BENCH = $l[6]
+            Write-Host "== $($l -join ' | ')"
             cargo test --manifest-path src-tauri/Cargo.toml --lib --locked render_the_card_for_a_picture -- --ignored --nocapture --test-threads=1
             if ($LASTEXITCODE -ne 0) { Write-Host "render failed for $($l -join ' ')"; exit $LASTEXITCODE }
           }
-          Get-ChildItem $out -Filter *.bgra | ForEach-Object { Write-Host ("{0} {1}" -f $_.Name, $_.Length) }
+          Get-ChildItem $out -Include *.bgra,*.txt -Recurse | ForEach-Object { Write-Host ("{0} {1}" -f $_.Name, $_.Length) }
       - name: Upload the pictures
         uses: actions/upload-artifact@v4
         with:
           name: card-${{ github.run_id }}
-          path: ${{ runner.temp }}/card/*.bgra
+          path: |
+            ${{ runner.temp }}/card/*.bgra
+            ${{ runner.temp }}/card/*.txt
           retention-days: 7
