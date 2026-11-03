@@ -69,7 +69,7 @@ try {
   page.on('response', (r) => { if (r.status() >= 400) logs.failed.push({ u: r.url().replace(/^http:\/\/127\.0\.0\.1:\d+/, '').slice(0, 110), s: r.status() }); });
   // every API call slower than 800 ms (setup, login, trial, demo load, page data): where do the seconds go?
   out.slowApi = []; let phase = 'start';
-  page.on('requestfinished', async (rq) => { try { const u = rq.url().replace(/^http:\/\/127\.0\.0\.1:\d+/, ''); if (!u.startsWith('/api/') || out.slowApi.length >= 60) return; const t = rq.timing(); const d = Math.round(t.responseEnd); if (d > 800) out.slowApi.push({ phase, m: rq.method(), u: u.slice(0, 90), ms: d }); } catch {} });
+  page.on('requestfinished', async (rq) => { try { const u = rq.url().replace(/^http:\/\/127\.0\.0\.1:\d+/, ''); if (!u.startsWith('/api/') || out.slowApi.length >= 60) return; const t = rq.timing(); const d = Math.round(t.responseEnd); if (d > 800) out.slowApi.push({ phase, m: rq.method(), u: u.slice(0, 90), ms: d, queued: Math.round(t.requestStart), wait: Math.round(t.responseStart - t.requestStart), dl: Math.round(t.responseEnd - t.responseStart), at: Date.now() }); } catch {} });
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
   await sleep(1500);
