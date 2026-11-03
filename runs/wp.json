@@ -1,8 +1,1 @@
-{
-  "msi_run": 41581576590,
-  "mode": "bk2",
-  "dbMB": 0,
-  "bkAt": 60,
-  "run": 150,
-  "wprobe": true
-}
+{"msi_run": 41581576590, "mode": "bk2", "dbMB": 600, "bkAt": 60, "wprobe": true, "wStopAt": 150, "bkAt2": 220, "run": 300}
