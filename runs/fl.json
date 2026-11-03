@@ -6,6 +6,6 @@
   "skipBase": 1,
   "crash": 0,
   "hog": 0,
-  "cpu": 3,
-  "note": "x14 v1: verify affinity mask 3 (2 cores), hog 0, final build"
+  "cpu": 0,
+  "note": "x14 l0a cpu=0 hog=0 final build"
 }
