@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "playwright-core": "^1.50.0",
-    "axe-core": "^4.10.0"
+    "axe-core": "^4.10.0",
+    "ws": "^8.18.0"
   }
 }

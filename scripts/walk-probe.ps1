@@ -25,8 +25,17 @@ if ($issuer) {
 Write-Host "walk: trial issuer up $issuerUp"
 $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $t0 = Get-Date
+# mode "early" (runs/wp.json): sampler and early request probe start BEFORE the app, so both clocks cover the first server answer
+$wpMode = ''; try { $wpMode = [string](Get-Content runs/wp.json -Raw | ConvertFrom-Json).mode } catch {}
+$early = ($wpMode -eq 'early')
+$earlyp = $null
+if ($early) {
+  $sampler = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/sampler.ps1') -WindowStyle Hidden -PassThru
+  $earlyp = Start-Process node -ArgumentList @('scripts/early.mjs', "$Port") -WindowStyle Hidden -PassThru -RedirectStandardOutput out/early.log -RedirectStandardError out/early.err
+  Write-Host "walk: early probe started (mode early), sampler started before the app"
+}
 $p = Start-Process -FilePath $exe -PassThru
-$sampler = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/sampler.ps1') -WindowStyle Hidden -PassThru
+if (-not $early) { $sampler = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/sampler.ps1') -WindowStyle Hidden -PassThru }
 $diskp = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/diskprobe.ps1') -WindowStyle Hidden -PassThru
 $ready = $false
 while (((Get-Date) - $t0).TotalSeconds -lt 300) {
@@ -39,6 +48,7 @@ Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).Total
 Start-Sleep -Seconds 3
 node scripts/stall2.mjs $Port
 New-Item -ItemType File -Force -Path out/sampler.stop | Out-Null
+if ($earlyp) { [void]$earlyp.WaitForExit(10000); Write-Host "walk: early probe exited $($earlyp.HasExited)" }
 Start-Sleep -Seconds 3
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
