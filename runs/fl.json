@@ -1,11 +1,11 @@
 {
   "baseline_run": 41409561319,
-  "fix_run": 41581576590,
+  "fix_run": 41588121345,
   "rounds": 1,
   "warm": 0,
   "skipBase": 1,
   "crash": 0,
   "hog": 8,
   "cpu": 1,
-  "note": "x14 l6a cpu=1 hog=8 final build"
+  "note": "leadC: 1 CPU + hog 8 on SET 2 build (has #668, UI-ready wait 180 s)"
 }
