@@ -78,7 +78,6 @@ async function step(flow, name, fn, opt = {}) {
   try { await Promise.race([Promise.allSettled(s.pend), sleep(2500)]); } catch {}
   delete s.pend; buf = null;
   if (!s.ok && !LOCAL && shots < 12) { shots++; const f = `out/shots/interact_${String(shots).padStart(2, '0')}.jpg`; try { fs.mkdirSync('out/shots', { recursive: true }); await page.screenshot({ path: f, type: 'jpeg', quality: 40, timeout: 8000 }); s.shot = f; } catch {} }
-  if (!s.ok) { try { await page.keyboard.press('Escape'); } catch {} }
   (R.flows[flow] ||= { steps: 0, ok: 0, fail: 0 }); R.flows[flow].steps++; R.flows[flow][s.ok ? 'ok' : 'fail']++;
   R.steps.push(s); save();
   console.log(`${s.ok ? 'ok  ' : 'FAIL'} ${flow} ${name} ${s.ms}ms${s.err ? ' :: ' + s.err : ''}${s.apiErrors.length ? ' api=' + JSON.stringify(s.apiErrors.map((h) => h.status + ' ' + h.url)) : ''}${s.console.length ? ' console=' + s.console.length : ''}`);
@@ -327,7 +326,7 @@ async function FB() {
   });
   await step('B', 'control: choose a commune by hand, then Create order', async (s) => {
     const d = dlg();
-    if (!(await d.isVisible().catch(() => false))) { s.state = { note: madeInB2 ? 'order already created in the previous step' : 'dialog was closed' }; return; }
+    if (!(await d.isVisible().catch(() => false))) { s.state = { note: madeInB2 ? 'order already created in the previous step' : 'dialog was closed' }; expect(madeInB2, 'the New order dialog was closed without an order'); return; }
     const com = d.getByRole('combobox', { name: /^select\.\.\.$/i }).first(); expect(await com.count() > 0, 'a blank Commune select');
     await com.click(); await sleep(600);
     const opts = await page.getByRole('option').allInnerTexts(); s.state = { communeOptions: opts.length, first: (opts[0] || '').slice(0, 30) };
