@@ -7,5 +7,5 @@
   "crash": 0,
   "hog": 0,
   "cpu": 1,
-  "note": "x14 l2a cpu=1 hog=0 final build"
+  "note": "x14 l2b cpu=1 hog=0 final build"
 }
