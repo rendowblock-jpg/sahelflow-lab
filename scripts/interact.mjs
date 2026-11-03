@@ -673,12 +673,82 @@ async function FB3() {
   }
 }
 
+
+// lead B (session 1), set 4: EDIT AN EXISTING CUSTOMER in the packaged app (PR #671 button + #672 duplicate-phone texts), en then ar
+async function FE() {
+  const ID = 'demo-customer-24';
+  const cust = async () => { const r = await apiJson('/api/customers/' + ID); return r.j && (r.j.customer || r.j); };
+  const errsOf = (d) => d.evaluate((el) => [...el.querySelectorAll('[role=alert],[aria-invalid=true],.text-destructive')].map((e) => (e.innerText || '').trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 4));
+  const digits = (v) => String(v || '').replace(/\D/g, '');
+  const saveBtn = (d) => d.getByRole('button', { name: /save changes|enregistrer|\u062d\u0641\u0638/i }).last();
+  const editBtn = () => page.getByRole('button', { name: /^(edit|modifier|\u062a\u0639\u062f\u064a\u0644)$/i }).first();
+  let before = null;
+  await step('E', 'customer page shows an Edit button and the form opens prefilled', async (s) => {
+    await go('/customers/' + ID); await sleep(1500); before = await cust();
+    s.state = { before: before && { name: before.name, phone: before.phone, address: before.address, wilaya: before.wilaya, commune: before.commune } };
+    const b = editBtn(); expect((await b.count()) > 0, 'an Edit button on the customer page');
+    await b.click({ timeout: 8000 }); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    const vals = await d.evaluate((el) => Object.fromEntries([...el.querySelectorAll('input')].map((i) => [i.name || i.type, i.value])));
+    s.state.dialogTitle = (await d.locator('h2,[role=heading]').first().innerText().catch(() => '')).slice(0, 60); s.state.values = { name: vals.name, phone: vals.phone, address: vals.address };
+    expect(digits(vals.phone) === digits(before.phone), 'phone prefilled: ' + vals.phone + ' vs ' + before.phone);
+    expect(String(vals.name || '').length > 0 && vals.name === before.name, 'name prefilled: ' + vals.name);
+    await page.keyboard.press('Escape'); await sleep(500);
+  });
+  await step('E', 'phone 12345 is refused with a message and nothing is saved', async (s) => {
+    await editBtn().click({ timeout: 8000 }); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    await d.locator('input[name=phone]').fill('12345'); await saveBtn(d).click({ timeout: 8000 }); await sleep(1500);
+    s.state = { dialogOpen: await d.isVisible().catch(() => false), errors: await errsOf(d), phoneAfter: (await cust()).phone, phoneBefore: before.phone };
+    expect(s.state.dialogOpen && s.state.errors.length > 0, 'dialog stays open with a message: ' + JSON.stringify(s.state.errors));
+    expect(s.state.phoneAfter === before.phone, 'stored phone unchanged: ' + s.state.phoneAfter);
+    await page.keyboard.press('Escape'); await sleep(500);
+  });
+  await step('E', 'a valid change saves, the dialog closes, the page shows the new address without reload', async (s) => {
+    await editBtn().click({ timeout: 8000 }); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    await d.locator('input[name=phone]').fill('0551234577'); await d.locator('input[name=address]').fill('Packaged edit 40 rue Didouche Mourad');
+    await saveBtn(d).click({ timeout: 8000 });
+    await d.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
+    let shown = false; for (let i = 0; i < 12 && !shown; i++) { await sleep(250); shown = (await page.locator('body').innerText()).includes('Packaged edit 40 rue Didouche Mourad'); }
+    const after = await cust();
+    s.state = { dialogClosed: !(await d.isVisible().catch(() => false)), pageShowsNewAddress: shown, stored: { phone: after.phone, address: after.address } };
+    expect(s.state.dialogClosed, 'dialog closed after Save'); expect(shown, 'the page shows the new address without a manual reload');
+    expect(after.phone === '0551234577' && after.address === 'Packaged edit 40 rue Didouche Mourad', 'stored values: ' + JSON.stringify(s.state.stored));
+  });
+  await step('E', 'a phone another customer has is refused (en text)', async (s) => {
+    await editBtn().click({ timeout: 8000 }); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    await d.locator('input[name=phone]').fill('0660001123'); await saveBtn(d).click({ timeout: 8000 }); await sleep(2000);
+    s.state = { dialogOpen: await d.isVisible().catch(() => false), errors: await errsOf(d), phoneAfter: (await cust()).phone };
+    expect(s.state.dialogOpen && s.state.errors.length > 0, 'dialog stays open with a message: ' + JSON.stringify(s.state.errors));
+    expect(s.state.phoneAfter === '0551234577', 'stored phone unchanged: ' + s.state.phoneAfter);
+    await page.keyboard.press('Escape'); await sleep(500);
+  });
+  const langBtn = () => page.getByRole('button', { name: /^(English|Fran\u00e7ais|\u0627\u0644\u0639\u0631\u0628\u064a\u0629)$/ }).first();
+  const pickLang = async (label) => { await langBtn().click(); await sleep(500); await page.getByRole('menuitem', { name: label }).or(page.getByRole('option', { name: label })).or(page.getByRole('radio', { name: label })).first().click(); await sleep(1500); };
+  await step('E', 'Arabic: Edit opens rtl and the duplicate-phone refusal is NOT the English server text', async (s) => {
+    await go('/customers/' + ID); await pickLang(/\u0639\u0631\u0628/i); await go('/customers/' + ID); await sleep(1200);
+    await editBtn().click({ timeout: 8000 }); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    const dir = await d.evaluate((el) => getComputedStyle(el).direction);
+    await d.locator('input[name=phone]').fill('0660001123'); await saveBtn(d).click({ timeout: 8000 }); await sleep(2000);
+    s.state = { dir, errors: await errsOf(d), phoneAfter: (await cust()).phone };
+    expect(dir === 'rtl', 'dialog direction ' + dir);
+    expect(s.state.errors.length > 0, 'a message is shown');
+    expect(!/already used|already exists/i.test(s.state.errors.join(' ')), 'the message is not the English server text: ' + JSON.stringify(s.state.errors));
+    expect(s.state.phoneAfter === '0551234577', 'stored phone unchanged: ' + s.state.phoneAfter);
+    await page.keyboard.press('Escape'); await sleep(500);
+  }, { timeout: 60000 });
+  await step('E', 'restore English and restore the customer through the API', async (s) => {
+    await go('/customers/' + ID); await pickLang(/english/i);
+    const r = await apiJson('/api/customers/' + ID, 'PATCH', { phone: before.phone, address: before.address });
+    const after = await cust(); s.state = { patch: r.s, after: { phone: after.phone, address: after.address } };
+    expect(after.phone === before.phone, 'phone restored: ' + after.phone);
+  }, { force: true });
+}
+
 const HARD = setTimeout(() => { R.notes.hardStop = 'hard stop at ' + Math.round((Date.now() - T_START) / 1000) + ' s'; R.finished = new Date().toISOString(); R.totals = { steps: R.steps.length, passed: R.steps.filter((x) => x.ok).length, failed: R.steps.filter((x) => !x.ok).length }; save(); console.log('HARD STOP'); process.exit(0); }, TOTAL_MS + 40000);
 try {
   await session();
-  const only = (process.env.FLOWS || 'B3').split(',');
-  const table = { B3: FB3, A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
-  for (const k of ['B3', 'A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
+  const only = (process.env.FLOWS || 'E,B3,RTL').split(',');
+  const table = { E: FE, B3: FB3, A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
+  for (const k of ['E', 'B3', 'A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
 } catch (e) { R.notes.fatal = String(e && e.stack ? e.stack : e).slice(0, 600); console.log('FATAL', R.notes.fatal); }
 clearTimeout(HARD);
 R.finished = new Date().toISOString();
