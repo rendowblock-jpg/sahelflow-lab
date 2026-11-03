@@ -1,8 +1,6 @@
 {
-  "msi_run": 41584449172,
+  "msi_run": 41596090053,
   "mode": "pages3",
   "seconds": 600,
-  "hog": 32,
-  "hogStartS": 240,
-  "hogStopS": 420
+  "hog": 0
 }
