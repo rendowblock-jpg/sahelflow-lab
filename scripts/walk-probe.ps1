@@ -55,6 +55,8 @@ New-Item -ItemType File -Force -Path out/sampler.stop | Out-Null
 if ($hogSched) { try { [void]$hogSched.WaitForExit(40000) } catch {} ; try { if (-not $hogSched.HasExited) { $hogSched.Kill() } } catch {} }
 Start-Sleep -Seconds 3
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
+# lag (F-0016): copy the lag recorder file from either data root (the host puts SF_DATA_DIR = %APPDATA%\com.sahelflow.desktop)
+foreach ($lr in $dataRoots) { $lp = Join-Path $lr 'lagrec.jsonl'; if (Test-Path $lp) { $tag = if ($lr -eq $dataRoots[0]) { 'local' } else { 'roaming' }; Copy-Item $lp (Join-Path 'out' "lagrec-$tag.jsonl") -ErrorAction SilentlyContinue; Write-Host "walk: lagrec copied from $lr ($((Get-Item $lp).Length) bytes)" } else { Write-Host "walk: no lagrec.jsonl in $lr" } }
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
 Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*SahelFlow*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 4
