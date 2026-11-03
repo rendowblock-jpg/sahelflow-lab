@@ -1,7 +1,7 @@
 {
   "repo": "rendowblock-jpg/sahelflow_v2",
-  "ref": "592df10c56b05a950ac7e0f379bd57d231cdd04d",
-  "label": "final-main-plus-656-662-664-665",
+  "ref": "1b35a010392f88df55abb19caa2f3cdb3f8288d4",
+  "label": "f16-nobkclk-final-plus-lab-change",
   "debug_port": 9222,
   "issuer_port": 8787
 }
