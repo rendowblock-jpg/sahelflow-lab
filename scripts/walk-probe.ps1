@@ -23,6 +23,9 @@ if ($issuer) {
   try { $h = Invoke-RestMethod 'http://127.0.0.1:8787/health' -TimeoutSec 3; $issuerUp = [bool]$h.ok } catch {}
 }
 Write-Host "walk: trial issuer up $issuerUp"
+$fsrec = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/fsevents.ps1') -WindowStyle Hidden -PassThru
+$w = 0; while (-not (Test-Path out/fsrec.ready) -and $w -lt 60) { Start-Sleep -Milliseconds 250; $w++ }
+Write-Host "walk: fsevents recorder ready $(Test-Path out/fsrec.ready) after $($w * 250) ms"
 $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $t0 = Get-Date
 $p = Start-Process -FilePath $exe -PassThru
