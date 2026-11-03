@@ -3,7 +3,7 @@ name: first-launch
 # installs, plus a kill-during-migration drill on the second MSI. Started by pushing a branch fl/** with runs/fl.json.
 on:
   push:
-    branches: ["fl/**", "x10/**", "x11/**"]
+    branches: ["fl/**", "x10/**", "x11/**", "x14/**"]
 permissions:
   contents: read
   actions: read
@@ -33,6 +33,9 @@ jobs:
           HG=$(node -p 'const h=Number(require("./runs/fl.json").hog); Number.isInteger(h)&&h>=0&&h<=16?h:0')
           echo "hog=$HG" >> "$GITHUB_OUTPUT"
           echo "hog request: $HG"
+          CPU=$(node -p 'const c=Number(require("./runs/fl.json").cpu); Number.isInteger(c)&&c>=0&&c<=15?c:0')
+          echo "cpu=$CPU" >> "$GITHUB_OUTPUT"
+          echo "cpu request (affinity mask): $CPU"
           echo "request: ok (prewarm=$PW)"
       - name: Lint PowerShell scripts
         shell: pwsh
@@ -64,7 +67,7 @@ jobs:
           path: msi-fix
       - name: Compare first launches
         shell: pwsh
-        run: ./scripts/first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds ${{ steps.req.outputs.rounds }} -Warm ${{ steps.req.outputs.warm }} -SkipBase ${{ steps.req.outputs.skipbase }} -Crash ${{ steps.req.outputs.crash }} -Prewarm ${{ steps.req.outputs.prewarm }} -Hog ${{ steps.req.outputs.hog }}
+        run: ./scripts/first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds ${{ steps.req.outputs.rounds }} -Warm ${{ steps.req.outputs.warm }} -SkipBase ${{ steps.req.outputs.skipbase }} -Crash ${{ steps.req.outputs.crash }} -Prewarm ${{ steps.req.outputs.prewarm }} -Hog ${{ steps.req.outputs.hog }} -Cpu ${{ steps.req.outputs.cpu }}
       - name: Pack and encrypt results
         if: always()
         run: bash scripts/pack-encrypt.sh

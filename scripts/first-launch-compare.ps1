@@ -1,7 +1,7 @@
 # usage: first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds 2
 # One runner, alternating clean installs: base, fix, base, fix ... then a crash drill on the fix build.
 # Per variant: uninstall + wipe app data, install, launch-observe (2 launches: first and repeat), DB check. Public log: durations only.
-param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1, [int]$SkipBase = 0, [int]$Crash = 1, [string]$Prewarm = 'off', [int]$Hog = 0)
+param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1, [int]$SkipBase = 0, [int]$Crash = 1, [string]$Prewarm = 'off', [int]$Hog = 0, [int]$Cpu = 0)
 $ErrorActionPreference = 'Continue'
 $dataRoots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
 $exe = Join-Path $env:ProgramFiles 'SahelFlow\sahelflow.exe'
@@ -105,7 +105,7 @@ function Run-Variant([string]$label, [string]$msi, [int]$launches) {
   try {
   # F-0010 experiment (off unless runs/fl.json has "prewarm"): read the WebView2 runtime / app files before the first launch
   if ($Prewarm -ne 'off') { try { & ./scripts/prewarm.ps1 -Mode $Prewarm } catch { Write-Host "prewarm: error (ignored) $_" } }
-  & ./scripts/launch-observe.ps1 -Launches $launches -SettleSeconds 8 -MaxSeconds 240
+  & ./scripts/launch-observe.ps1 -Launches $launches -SettleSeconds 8 -MaxSeconds 240 -Cpu $Cpu
   } finally { if ($Hog -gt 0) { Stop-Hogs $Hog } }
   Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
