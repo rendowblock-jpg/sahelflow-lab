@@ -1,7 +1,7 @@
 {
   "repo": "rendowblock-jpg/sahelflow_v2",
-  "ref": "79fe85adf54541d3750d1575845001931b4f0e65",
-  "label": "flushq-all6-plus-663",
+  "ref": "lab/bis-a",
+  "label": "bis-a",
   "debug_port": 9222,
   "issuer_port": 8787
 }
