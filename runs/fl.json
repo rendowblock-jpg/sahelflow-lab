@@ -5,7 +5,7 @@
   "warm": 0,
   "skipBase": 1,
   "crash": 0,
-  "hog": 4,
-  "cpu": 1,
-  "note": "x14 l4b cpu=1 hog=4 final build"
+  "hog": 8,
+  "cpu": 3,
+  "note": "x14 l5a cpu=3 hog=8 final build"
 }
