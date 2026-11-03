@@ -27,6 +27,7 @@ $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $t0 = Get-Date
 $p = Start-Process -FilePath $exe -PassThru
 $sampler = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/sampler.ps1') -WindowStyle Hidden -PassThru
+$diskp = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/diskprobe.ps1') -WindowStyle Hidden -PassThru
 $ready = $false
 while (((Get-Date) - $t0).TotalSeconds -lt 300) {
   $tr = Get-Trace
