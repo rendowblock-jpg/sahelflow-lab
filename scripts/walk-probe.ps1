@@ -28,6 +28,29 @@ $t0 = Get-Date
 $p = Start-Process -FilePath $exe -PassThru
 $sampler = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/sampler.ps1') -WindowStyle Hidden -PassThru
 $diskp = Start-Process pwsh -ArgumentList @('-NoProfile', '-File', 'scripts/diskprobe.ps1') -WindowStyle Hidden -PassThru
+$mode = ''
+try { $mode = [string](Get-Content runs/wp.json -Raw | ConvertFrom-Json).mode } catch {}
+Write-Host "walk: mode '$mode'"
+# mode pages3early: find the app's local server port, then start the early request probe (scripts/early.mjs) in its own process
+$early = $null
+if ($mode -eq 'pages3early') {
+  $found = @()
+  $tp = Get-Date
+  while (((Get-Date) - $tp).TotalSeconds -lt 120 -and $found.Count -eq 0) {
+    $ids = @(Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*SahelFlow*' } | ForEach-Object { $_.Id })
+    if ($ids.Count -gt 0) {
+      foreach ($l in (netstat -ano -p tcp)) {
+        if ($l -match 'TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$' -and ($ids -contains [int]$Matches[2])) { $found += $Matches[1] }
+      }
+    }
+    if ($found.Count -eq 0) { Start-Sleep -Milliseconds 200 }
+  }
+  Write-Host "walk: early probe ports [$($found -join ',')] after $([math]::Round(((Get-Date) - $tp).TotalSeconds, 1)) s"
+  if ($found.Count -gt 0) {
+    $early = Start-Process node -ArgumentList @('scripts/early.mjs', ($found -join ','), '660', "$Port") -WindowStyle Hidden -PassThru -RedirectStandardOutput out/early.log -RedirectStandardError out/early.err
+  }
+  ([ordered]@{ launchMs = $startMs; portsFoundAfterS = [math]::Round(((Get-Date) - $t0).TotalSeconds, 2); ports = @($found) } | ConvertTo-Json -Compress) | Set-Content out/early-meta.json
+}
 $ready = $false
 while (((Get-Date) - $t0).TotalSeconds -lt 300) {
   $tr = Get-Trace
@@ -35,9 +58,12 @@ while (((Get-Date) - $t0).TotalSeconds -lt 300) {
   if (-not (Get-Process -Name sahelflow -ErrorAction SilentlyContinue)) { break }
   Start-Sleep -Milliseconds 800
 }
+$uiSeenMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+Write-Host "walk: ui-ready seen at unix ms $uiSeenMs (launch $startMs)"
 Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
 Start-Sleep -Seconds 3
 node scripts/stall2.mjs $Port
+if ($early) { Wait-Process -Id $early.Id -Timeout 700 -ErrorAction SilentlyContinue }
 New-Item -ItemType File -Force -Path out/sampler.stop | Out-Null
 Start-Sleep -Seconds 3
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }

@@ -3,7 +3,7 @@ name: walk-probe
 # shows and where routes lead. Started by pushing a branch wp/** with runs/wp.json.
 on:
   push:
-    branches: ["wp/**"]
+    branches: ["wp/**", "x12/**"]
 permissions:
   contents: read
   actions: read

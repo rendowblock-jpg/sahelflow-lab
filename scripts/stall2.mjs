@@ -133,7 +133,7 @@ try {
   // Stall probe 2: once per second fire a few requests IN PARALLEL from the page; log absolute fire/finish times.
   // STALL_MODE (runs/wp.json "mode"): plain = tiny API routes only; cod = the cod-reconciliation page + license status.
   let mode = 'plain'; try { mode = JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')).mode || 'plain'; } catch {}
-  const targets = mode === 'pages3' ? ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'] : mode === 'cod' ? ['/accounting/cod-reconciliation', '/api/license/status'] : ['/api/license/status', '/api/orders?limit=5'];
+  const targets = (mode === 'pages3' || mode === 'pages3early') ? ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'] : mode === 'cod' ? ['/accounting/cod-reconciliation', '/api/license/status'] : ['/api/license/status', '/api/orders?limit=5'];
   out.stall = { mode, seconds: Number(process.env.STALL_SECONDS || 900), targets, samples: [] };
   const T0 = Date.now(); out.stall.t0 = T0; const pending = [];
   const fire = (k) => { const fired = Date.now(); return page.evaluate(async ([targets]) => {
