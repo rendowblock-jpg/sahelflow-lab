@@ -134,7 +134,8 @@ try {
   // STALL_MODE (runs/wp.json "mode"): plain = tiny API routes only; cod = the cod-reconciliation page + license status.
   let mode = 'plain'; try { mode = JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')).mode || 'plain'; } catch {}
   const targets = mode === 'pages3' ? ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'] : mode === 'cod' ? ['/accounting/cod-reconciliation', '/api/license/status'] : ['/api/license/status', '/api/orders?limit=5'];
-  out.stall = { mode, seconds: Number(process.env.STALL_SECONDS || 900), targets, samples: [] };
+  let cfgSecs = 900; try { cfgSecs = Number(JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')).seconds) || 900; } catch {}
+  out.stall = { mode, seconds: Number(process.env.STALL_SECONDS || cfgSecs), targets, samples: [] };
   const T0 = Date.now(); out.stall.t0 = T0; try { fs.writeFileSync('out/stall.t0', String(T0)); } catch {} const pending = [];
   const fire = (k) => { const fired = Date.now(); return page.evaluate(async ([targets]) => {
     const one = async (u) => { const s = performance.now(); try { const r = await fetch(u, { cache: 'no-store' }); await r.text(); return [Math.round(performance.now() - s), r.status]; } catch (e) { return [Math.round(performance.now() - s), -1]; } };
