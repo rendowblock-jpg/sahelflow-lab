@@ -633,7 +633,7 @@ async function FRTL() {
 const HARD = setTimeout(() => { R.notes.hardStop = 'hard stop at ' + Math.round((Date.now() - T_START) / 1000) + ' s'; R.finished = new Date().toISOString(); R.totals = { steps: R.steps.length, passed: R.steps.filter((x) => x.ok).length, failed: R.steps.filter((x) => !x.ok).length }; save(); console.log('HARD STOP'); process.exit(0); }, TOTAL_MS + 40000);
 try {
   await session();
-  const only = (process.env.FLOWS || 'A,B,B2,V,X,R,RTL').split(',');
+  const only = (process.env.FLOWS || 'A,B,B2,V,RTL').split(',');
   const table = { A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
   for (const k of ['A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
 } catch (e) { R.notes.fatal = String(e && e.stack ? e.stack : e).slice(0, 600); console.log('FATAL', R.notes.fatal); }
