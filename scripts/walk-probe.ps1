@@ -45,5 +45,17 @@ Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | 
 Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*SahelFlow*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 4
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# bk2 (x15) only: integrity of the live shop DB(s) after the run, and the size of what the backups left in Downloads\SahelFlow Backups
+$cfgMode = ''; try { $cfgMode = (Get-Content runs/wp.json -Raw | ConvertFrom-Json).mode } catch {}
+if ($cfgMode -eq 'bk2') {
+  try { python scripts/check-db.py bk2 | Out-File -Encoding utf8 out/dbcheck.json } catch { Write-Host "dbcheck: error $_" }
+  try {
+    $bd = Join-Path $env:USERPROFILE 'Downloads\SahelFlow Backups'
+    $rows = @()
+    if (Test-Path $bd) { $rows = @(Get-ChildItem $bd -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ rel = $_.FullName.Substring($bd.Length + 1); bytes = $_.Length; last = $_.LastWriteTimeUtc.ToString('o') } }) }
+    ConvertTo-Json -InputObject $rows -Depth 3 | Out-File -Encoding utf8 out/backups.json
+    Write-Host "bk2: backup files $($rows.Count)"
+  } catch { Write-Host "backups listing: error $_" }
+}
 Remove-Item out/assets -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "walk: done"

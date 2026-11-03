@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import nodePath from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const port = process.argv[2] || '9222';
@@ -133,6 +133,19 @@ try {
   out.nav = await page.evaluate(() => [...new Set([...document.querySelectorAll('a[href^="/"]')].map((a) => a.getAttribute('href').split('?')[0]))]);
 
 
+  // ---- bk2 (x15): inflate the LIVE shop database by cfg.dbMB MB (python sqlite3, 20 MB batches) BEFORE the probe window; always records file sizes
+  { let c0 = {}; try { c0 = JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')); } catch {}
+    if (c0.mode === 'bk2') {
+      phase = 'inflate';
+      const ti = Date.now();
+      try {
+        const pr = spawnSync('python', ['scripts/inflate.py', String(Number(c0.dbMB) || 0)], { encoding: 'utf8', timeout: 900000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+        out.inflate = { ms: Date.now() - ti, status: pr.status, signal: pr.signal, stdout: String(pr.stdout || '').slice(-1500), stderr: String(pr.stderr || '').slice(-600), err: pr.error ? String(pr.error).slice(0, 200) : null };
+        try { out.inflate.json = JSON.parse(String(pr.stdout || '').trim().split('\n').pop()); } catch {}
+      } catch (e) { out.inflate = { ms: Date.now() - ti, thrown: String(e).slice(0, 300) }; }
+      await sleep(3000);
+    }
+  }
   phase = 'stall';
   // Stall probe 2: once per second fire a few requests IN PARALLEL from the page; log absolute fire/finish times.
   // STALL_MODE (runs/wp.json "mode"): plain = tiny API routes only; cod = the cod-reconciliation page + license status.
@@ -141,7 +154,8 @@ try {
   // from hogAt for hogFor seconds. Everything is logged with absolute unix ms; probe time = (t - stall.t0) / 1000.
   let cfg = {}; try { cfg = JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')); } catch {}
   let mode = cfg.mode || 'plain';
-  const BK = mode === 'bk1';
+  const BK = mode === 'bk1' || mode === 'bk2';
+  const B2 = mode === 'bk2';
   let targets = mode === 'pages3' ? ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'] : mode === 'cod' ? ['/accounting/cod-reconciliation', '/api/license/status'] : ['/api/license/status', '/api/orders?limit=5'];
   let staticUrl = null;
   if (BK) {
@@ -162,23 +176,25 @@ try {
     const cookies = await ctx.cookies(origin).catch(() => []);
     const cookieHdr = cookies.map((c) => c.name + '=' + c.value).join('; ');
     out.bkx = { cookieCount: cookies.length, staticUrl, cfg: { bkAt: cfg.bkAt, bkAt2: cfg.bkAt2, hog: cfg.hog, hogAt: cfg.hogAt, hogFor: cfg.hogFor, run: cfg.run } };
-    const nodeReq = (u, method = 'GET') => new Promise((res) => {
-      const s = Date.now(); let n = 0; let ttfb = null; let done = false;
-      const fin = (st) => { if (done) return; done = true; res([Date.now() - s, st, s, n, ttfb]); };
-      const q = http.request({ host: '127.0.0.1', port, path: u, method, agent: false, headers: { Connection: 'close', Cookie: cookieHdr, 'x-requested-with': 'sahelflow' } }, (r) => {
-        ttfb = Date.now() - s; r.on('data', (c) => { n += c.length; }); r.on('end', () => fin(r.statusCode)); r.on('error', () => fin(-1));
+    const nodeReq = (u, method = 'GET', toMs = 120000, bodyStr = null) => new Promise((res) => {
+      const s = Date.now(); let n = 0; let ttfb = null; let done = false; let head = '';
+      const fin = (st) => { if (done) return; done = true; res(method === 'GET' ? [Date.now() - s, st, s, n, ttfb] : [Date.now() - s, st, s, n, ttfb, head]); };
+      const hd = { Connection: 'close', Cookie: cookieHdr, 'x-requested-with': 'sahelflow' };
+      if (bodyStr !== null) { hd['content-type'] = 'application/json'; hd['content-length'] = Buffer.byteLength(bodyStr); }
+      const q = http.request({ host: '127.0.0.1', port, path: u, method, agent: false, headers: hd }, (r) => {
+        ttfb = Date.now() - s; r.on('data', (c) => { n += c.length; if (method !== 'GET' && head.length < 400) head += c.toString('utf8'); }); r.on('end', () => fin(r.statusCode)); r.on('error', () => fin(-1));
       });
-      q.setTimeout(120000, () => { q.destroy(); fin(-3); });
-      q.on('error', () => fin(-2)); q.end();
+      q.setTimeout(toMs, () => { q.destroy(); fin(-3); });
+      q.on('error', () => fin(-2)); if (bodyStr !== null) q.write(bodyStr); q.end();
     });
     out.stallN = { targets: ['/manifest.webmanifest', ...(staticUrl ? [staticUrl] : []), '/api/health', '/api/license/status', '/api/orders?limit=5'], samples: [] };
     const fireN = (k) => { const fired = Date.now(); return Promise.all(out.stallN.targets.map((u) => nodeReq(u))).then((res) => { out.stallN.samples.push({ k, fired, done: Date.now(), r: res }); }); };
     out.bk = [];
     const bkCall = (label) => {
       const fired = Date.now();
-      return nodeReq('/api/backup/create', 'POST').then(async (r) => {
+      return nodeReq('/api/backup/create', 'POST', B2 ? 900000 : 120000).then(async (r) => {
         let via = 'node';
-        let rec = { label, via, fired, startMs: r[2], ms: r[0], status: r[1], bytes: r[3], ttfb: r[4], doneMs: r[2] + r[0] };
+        let rec = { label, via, fired, startMs: r[2], ms: r[0], status: r[1], bytes: r[3], ttfb: r[4], doneMs: r[2] + r[0], ...(B2 ? { head: String(r[5] || '').slice(0, 300) } : {}) };
         if (r[1] === 401 || r[1] === 403 || r[1] === -2) {
           const p = await page.evaluate(async () => { const s = performance.now(); try { const x = await fetch('/api/backup/create', { method: 'POST', headers: { 'x-requested-with': 'sahelflow' } }); const t = await x.text(); return { status: x.status, bytes: t.length, ms: Math.round(performance.now() - s), startMs: Math.round(performance.timeOrigin + s) }; } catch (e) { return { status: -1, ms: Math.round(performance.now() - s), startMs: Math.round(performance.timeOrigin + s) }; } }).catch(() => ({ status: -9 }));
           rec = { ...rec, via: 'page-fallback', nodeStatus: r[1], status: p.status, bytes: p.bytes, ms: p.ms, startMs: p.startMs, doneMs: p.startMs + p.ms };
@@ -186,10 +202,27 @@ try {
         out.bk.push(rec);
       });
     };
+    // ---- bk2 write probe: every 2 s ONE write a seller makes (POST /api/customers create; every 2nd one PATCH /api/customers/:id notes). 60 s timeout.
+    const WP = B2 && cfg.wprobe === true; const wStop = Number(cfg.wStopAt) > 0 ? Number(cfg.wStopAt) : 1e9;
+    out.wp = { on: WP, stopAt: wStop < 1e8 ? wStop : null, samples: [] }; const wpending = []; let lastCust = null; let wseq = 0;
+    const writeOnce = (k) => {
+      const j = wseq++; const patch = (j % 2 === 1) && lastCust; const fired = Date.now();
+      const body = patch ? JSON.stringify({ notes: 'x15 probe note ' + j }) : JSON.stringify({ name: 'X15 Probe ' + j, phone: '06' + String(90000000 + j).padStart(8, '0'), wilaya: 'Alger', notes: 'x15 write probe' });
+      const kind = patch ? 'PATCH' : 'POST'; const url = patch ? '/api/customers/' + lastCust : '/api/customers';
+      return nodeReq(url, kind, 60000, body).then((r) => {
+        const rec = { j, k, kind, fired, ms: r[0], status: r[1], bytes: r[3] };
+        if (!(r[1] >= 200 && r[1] < 300)) rec.head = String(r[5] || '').slice(0, 200);
+        else if (kind === 'POST') { try { const id = JSON.parse(r[5] || '{}')?.customer?.id; if (id) lastCust = id; } catch {} }
+        out.wp.samples.push(rec);
+      });
+    };
+    out.stall._writeTick = (k) => { if (WP && k % 2 === 0 && k < wStop) wpending.push(writeOnce(k)); };
+    out.stall._writeWait = () => Promise.all(wpending);
     const timers = [];
     const at = (sec, fn) => timers.push(new Promise((res) => setTimeout(() => { Promise.resolve(fn()).then(res, res); }, Math.max(0, sec * 1000 - (Date.now() - T0)))));
     if (cfg.bkAt > 0) at(cfg.bkAt, () => bkCall('bk1'));
     if (cfg.bkAt2 > 0) at(cfg.bkAt2, () => bkCall('bk2'));
+    if (B2) out.b2cfg = { dbMB: cfg.dbMB, wprobe: cfg.wprobe, wStopAt: cfg.wStopAt, bkAt: cfg.bkAt, bkAt2: cfg.bkAt2, hog: cfg.hog, run: cfg.run };
     if (cfg.hog > 0) {
       const hogProcs = []; const hogDir = nodePath.join(os.tmpdir(), 'sfhog'); const hogAt = cfg.hogAt || 45; const hogFor = cfg.hogFor || 90;
       const hogScript = nodePath.resolve('scripts/hog.ps1');
@@ -233,8 +266,9 @@ try {
     out.stall._timers = timers;
     out.stall._fireN = fireN;
   }
-  for (let k = 0; Date.now() - T0 < out.stall.seconds * 1000; k++) { pending.push(fire(k)); if (BK) pending.push(out.stall._fireN(k)); await sleep(1000); }
+  for (let k = 0; Date.now() - T0 < out.stall.seconds * 1000; k++) { pending.push(fire(k)); if (BK) pending.push(out.stall._fireN(k)); if (B2) out.stall._writeTick(k); await sleep(1000); }
   await Promise.all(pending);
+  if (B2) { await out.stall._writeWait(); delete out.stall._writeTick; delete out.stall._writeWait; }
   if (BK) { await Promise.all(out.stall._timers); delete out.stall._timers; delete out.stall._fireN; }
   out.stall.samples.sort((a, b) => a.k - b.k);
   if (BK) { out.stallN.samples.sort((a, b) => a.k - b.k); }
