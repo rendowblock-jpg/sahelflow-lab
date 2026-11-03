@@ -60,6 +60,11 @@ while (((Get-Date) - $t0).TotalSeconds -lt 300) {
 }
 $uiSeenMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 Write-Host "walk: ui-ready seen at unix ms $uiSeenMs (launch $startMs)"
+if ($mode -eq 'pages3early') {
+  ([ordered]@{ launchMs = $startMs; uiReadySeenMs = $uiSeenMs; ready = $ready; readyAfterS = [math]::Round(((Get-Date) - $t0).TotalSeconds, 2) } | ConvertTo-Json -Compress) | Set-Content out/early-meta2.json
+  $ri = 0
+  foreach ($r in $dataRoots) { $p0 = Join-Path $r 'startup-trace.json'; if (Test-Path $p0) { Copy-Item $p0 "out/trace-at-ready-root$ri.json" }; $ri++ }
+}
 Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
 Start-Sleep -Seconds 3
 node scripts/stall2.mjs $Port
@@ -67,6 +72,17 @@ if ($early) { Wait-Process -Id $early.Id -Timeout 700 -ErrorAction SilentlyConti
 New-Item -ItemType File -Force -Path out/sampler.stop | Out-Null
 Start-Sleep -Seconds 3
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
+if ($mode -eq 'pages3early') {
+  # the old copy above only looks in the first data folder; the trace may sit in the second one or deeper: copy from both, flattened names
+  $ri = 0
+  foreach ($r in $dataRoots) {
+    Get-ChildItem $r -Recurse -Depth 3 -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object {
+      $rel = $_.FullName.Substring($r.Length).TrimStart('\') -replace '[\\/]', '__'
+      Copy-Item $_.FullName (Join-Path 'out' "root$ri--$rel")
+    }
+    $ri++
+  }
+}
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
 Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*SahelFlow*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 4
