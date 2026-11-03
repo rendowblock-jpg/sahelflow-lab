@@ -6,6 +6,6 @@
   "skipBase": 1,
   "crash": 0,
   "hog": 4,
-  "cpu": 3,
-  "note": "x14 l3b cpu=3 hog=4 final build"
+  "cpu": 1,
+  "note": "x14 l4a cpu=1 hog=4 final build"
 }
