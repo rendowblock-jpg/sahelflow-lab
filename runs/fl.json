@@ -1,11 +1,11 @@
 {
   "baseline_run": 41409561319,
-  "fix_run": 41581576590,
+  "fix_run": 41588121345,
   "rounds": 1,
   "warm": 0,
   "skipBase": 1,
   "crash": 0,
   "hog": 4,
   "cpu": 1,
-  "note": "x14 l4b cpu=1 hog=4 final build"
+  "note": "tl validation of #668 on set 2: cpu=1 hog=4 (b)"
 }
