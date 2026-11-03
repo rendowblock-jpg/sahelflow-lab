@@ -35,11 +35,19 @@ while (((Get-Date) - $t0).TotalSeconds -lt 300) {
 }
 Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
 Start-Sleep -Seconds 3
-$env:WALK_ROUTES = '/settings,/profile,/returns,/notifications,/risk,/customers/demo-customer-24,/dashboard,/orders,/products'
-$env:WALK_LOCALES = 'en'
-$env:WALK_THEMES = 'light'
-$env:WALK_VPS = 'desk'
-node scripts/axedetail.mjs $Port
+$mode = 'axed'
+try { $m = (Get-Content runs/wp.json -Raw | ConvertFrom-Json).mode; if ($m) { $mode = [string]$m } } catch {}
+Write-Host "walk: mode $mode"
+if ($mode -eq 'interact') {
+  $env:OUT = 'out/interact.json'
+  node scripts/interact.mjs $Port 2>&1 | Tee-Object -FilePath out/interact.log | ForEach-Object { if ("$_" -match '^(ok  |FAIL|SKIP|TOTALS|HARD|FATAL|flow crashed)') { Write-Host "$_" } }
+} else {
+  $env:WALK_ROUTES = '/settings,/profile,/returns,/notifications,/risk,/customers/demo-customer-24,/dashboard,/orders,/products'
+  $env:WALK_LOCALES = 'en'
+  $env:WALK_THEMES = 'light'
+  $env:WALK_VPS = 'desk'
+  node scripts/axedetail.mjs $Port
+}
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
 Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*SahelFlow*' } | Stop-Process -Force -ErrorAction SilentlyContinue
