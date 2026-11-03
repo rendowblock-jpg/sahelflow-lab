@@ -1,9 +1,9 @@
 {
   "baseline_run": 41409561319,
-  "fix_run": 41539952078,
+  "fix_run": 41558118825,
   "rounds": 1,
   "warm": 0,
   "skipBase": 1,
   "crash": 0,
-  "note": "one cold sample: the FIX msi is the first thing on a fresh runner; startup trace saved"
+  "note": "slow-a: #658 only, window delayed 45 s (expect Startup blocked)"
 }
