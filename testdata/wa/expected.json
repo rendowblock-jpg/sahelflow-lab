@@ -1,0 +1,144 @@
+{
+ "appStatus": {
+  "applied": 285,
+  "busy?digits-removed": 1,
+  "dead_letter": 303,
+  "null (no answer from the app)": 564,
+  "quarantined": 276,
+  "retry": 246
+ },
+ "attempts": {
+  "inbound.committed": {
+   "max": 4,
+   "median": 2,
+   "min": 1,
+   "n": 501
+  },
+  "inbound.delivery-failed": {
+   "max": 17,
+   "median": 9,
+   "min": 1,
+   "n": 1675
+  }
+ },
+ "bytes": {
+  "log": 422464,
+  "log1": 335331
+ },
+ "codes": {
+  "inbound.delivery-failed": {
+   "AbortError": 376,
+   "EBUSY": 60,
+   "ECONNREFUSED": 69,
+   "TimeoutError": 893,
+   "UNKNOWN": 208,
+   "app_503": 66,
+   "bad?code???xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 1,
+   "digits-removed": 1,
+   "jid-removed": 1
+  },
+  "spool.flush-failed": {
+   "EBUSY": 117,
+   "ENOSPC": 135,
+   "EPERM": 107,
+   "UNKNOWN": 107,
+   "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ": 1
+  }
+ },
+ "events": {
+  "connection.update": 259,
+  "inbound.committed": 501,
+  "inbound.delivery-failed": 1675,
+  "inbound.spooled": 1360,
+  "inbound.upsert": 175,
+  "liveness": 315,
+  "other-event": 1,
+  "provider.warn": 346,
+  "send.outcome": 256,
+  "session.state": 171,
+  "spool.flush-failed": 467,
+  "spool.status": 479
+ },
+ "first": "2026-11-02T06:13:20",
+ "last": "2026-11-07T02:16:20",
+ "last20": [
+  [
+   "spool.flush-failed",
+   "EPERM",
+   107
+  ],
+  [
+   "inbound.delivery-failed",
+   "TimeoutError",
+   893
+  ],
+  [
+   "inbound.delivery-failed",
+   "app_503",
+   66
+  ],
+  [
+   "spool.flush-failed",
+   "UNKNOWN",
+   107
+  ],
+  [
+   "spool.flush-failed",
+   "EBUSY",
+   117
+  ],
+  [
+   "inbound.delivery-failed",
+   "AbortError",
+   376
+  ],
+  [
+   "inbound.delivery-failed",
+   "UNKNOWN",
+   208
+  ],
+  [
+   "spool.flush-failed",
+   "ENOSPC",
+   135
+  ],
+  [
+   "inbound.delivery-failed",
+   "ECONNREFUSED",
+   69
+  ],
+  [
+   "inbound.delivery-failed",
+   "EBUSY",
+   60
+  ],
+  [
+   "other-event",
+   "UNKNOWN",
+   1
+  ],
+  [
+   "spool.flush-failed",
+   "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+   1
+  ],
+  [
+   "inbound.delivery-failed",
+   "bad?code???xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   1
+  ],
+  [
+   "inbound.delivery-failed",
+   "digits-removed",
+   1
+  ],
+  [
+   "inbound.delivery-failed",
+   "jid-removed",
+   1
+  ]
+ ],
+ "lines": 6009,
+ "oversized": 1,
+ "unreadable": 2
+}

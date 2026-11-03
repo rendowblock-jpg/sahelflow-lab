@@ -38,6 +38,9 @@ jobs:
       - name: S4 read WebView2
         continue-on-error: true
         run: ./ci/kit-steps.ps1 -Step s4
+      - name: S7 planted synthetic data, check without launch
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s7
       - name: S5 download evidence MSI of run 41588121345
         id: dl
         continue-on-error: true

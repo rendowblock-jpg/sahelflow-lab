@@ -1,26 +1,43 @@
 <#
 =====================================================================================
- SahelFlow PC check  -  script version 1
+ SahelFlow PC check  -  script version 2
 =====================================================================================
  WHAT THIS IS
-   It records how fast SahelFlow starts on THIS PC and how fast this PC's disk is,
-   and writes the numbers into ONE small text file that you can send back.
-   It is read-only for everything except its own report file.
+   It records how fast SahelFlow starts on THIS PC, how fast this PC's disk is, and a few
+   facts that can explain why the installed app is slow or why WhatsApp messages wait. It
+   writes the numbers into ONE small text file that you can send back. The first 8 lines of
+   that file are a plain summary. It is read-only for everything except its own report file.
 
  WHAT IT READS (and nothing else)
-   1. Facts that Windows gives about this PC: Windows version, processor, memory,
-      the type of the system disk (SSD or hard disk), free disk space, how long the
-      PC has been on, the Microsoft WebView2 version, whether Windows Defender
-      real-time protection is on, the names of antivirus products, and the version
-      of SahelFlow (from the list of installed programs and from the properties of
-      C:\Program Files\SahelFlow\sahelflow.exe).
+   1. Facts that Windows gives about this PC: Windows version, processor and number of cores,
+      memory, the type of the system disk (SSD or hard disk), free disk space, how long the
+      PC has been on, the power plan, whether the PC runs on battery or mains power, the
+      Microsoft WebView2 version, whether Windows Defender real-time protection is on, HOW MANY
+      exclusions Defender has (only the number, never the list), the names of antivirus products,
+      and the version of SahelFlow (from the list of installed programs and from the properties
+      of C:\Program Files\SahelFlow\sahelflow.exe).
    2. Two small files that SahelFlow itself writes about its own start:
          startup-trace.json   and   runtime-ui-diagnostic.json
       in the folder  %APPDATA%\com.sahelflow.desktop  (or, if not there,
-      %LOCALAPPDATA%\com.sahelflow.desktop). The script opens only these two files
-      by name. It does not list or open anything else in that folder. It never
-      touches the shop database, customers, keys, passwords or the licence.
-   3. ONLY if you add -ReadWebView2: every file of Microsoft's WebView2 program
+      %LOCALAPPDATA%\com.sahelflow.desktop).
+   3. Sizes only (new in version 2): the script lists the SahelFlow data folders and adds up
+      the size and the number of files. It reports the size of the shop database files (and of
+      their -wal file), of the log files, and how many files wait in the WhatsApp spool folder
+      and how old the oldest one is. It never OPENS the shop database, customers, keys,
+      passwords, licence or the waiting WhatsApp files, and it writes no file name from these
+      folders into the report. The only folder names written are a fixed list of the app's own
+      folders (for example shops, logs, whatsapp-inbound-spool).
+   4. The WhatsApp diagnostics log (new in version 2): <data folder>\logs\whatsapp-diagnostics.log
+      and the older copy .log.1. SahelFlow already removes phone numbers and names from this file.
+      The script reads it line by line but keeps only five things from each line: the time, the
+      event name, the error code, the attempt number and the appStatus. Everything else in the
+      line is thrown away at once. The report shows COUNTS only; every text is cut to 64
+      characters, long digit runs and anything with an @ are replaced.
+   5. The running programs for 10 seconds (new in version 2): program names, memory in use and
+      processor seconds. No window titles, no command lines, no file paths are written. (The
+      command line of WebView2 helper programs is looked at only to tell which of them belong
+      to SahelFlow; it is not written.)
+   6. ONLY if you add -ReadWebView2: every file of Microsoft's WebView2 program
       folder (under Program Files) is read once and the data is thrown away, to
       time a cold read of the disk. This takes 10 to 60 seconds.
 
@@ -29,9 +46,10 @@
       in the folder where this script is (or on the Desktop if that folder is not
       writable). The report has the computer name but not your user name; the
       profile folder is shown as %USERPROFILE%.
-   2. During the disk test: temporary test files (at most about 70 MB) in a new
-      folder inside your temporary folder (%TEMP%). They are deleted at the end of
-      the test. This is the only thing written outside the report.
+   2. During the disk wait test and the disk test: temporary test files in a new
+      folder inside your temporary folder (%TEMP%): 30 small writes of 4 KB in one file,
+      and, in the disk test, at most about 70 MB. They are deleted at the end of
+      each test. This is the only thing written outside the report.
       (Only if you start it with PowerShell 7 instead of Windows PowerShell: Windows' own
       Defender commands may also leave a small folder remoteIpMoProxy_... in %TEMP%.)
 
@@ -49,7 +67,8 @@
    powershell -ExecutionPolicy Bypass -File sahelflow-pc-check.ps1 -Launch -Twice
 
  OPTIONS
-   (none)          read the start-up file of the last launch + machine facts + disk test
+   (none)          read the start-up file of the last launch + machine facts + data sizes +
+                   WhatsApp log counts + running programs + disk tests
    -Launch         ask you to close SahelFlow, start it, time the start
    -Launch -Twice  do it twice (the second start is the warm one). -Twice alone = same
    -ReadWebView2   also time a read of the WebView2 program folder (10-60 s, heavy)
@@ -74,7 +93,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ScriptVersion = '1'
+$ScriptVersion = '2'
 $Inv = [Globalization.CultureInfo]::InvariantCulture
 $MaxWaitSeconds = $MaxWait
 $script:Epoch = New-Object DateTime 1970, 1, 1, 0, 0, 0, ([DateTimeKind]::Utc)
@@ -242,9 +261,34 @@ function Get-SystemDiskInfo {
   $extra = @()
   if ($bus) { $extra += $bus }
   if ($name) { $extra += $name }
+  $spin = Get-Prop $disk 'SpindleSpeed' $null
+  if ($null -ne $spin -and "$spin" -match '^\d+$') {
+    $sp = [int64]$spin
+    if ($sp -gt 0 -and $sp -lt 100000) { $extra += ('Windows says: spinning disk, ' + $sp + ' rpm') }
+    elseif ($sp -eq 0) { $extra += 'Windows says: spindle speed 0 (no spinning)' }
+  }
   $tail = ''
   if ($extra.Count -gt 0) { $tail = ' [' + ($extra -join ', ') + $sizeGb + ']' } elseif ($sizeGb) { $tail = ' [' + $sizeGb.TrimStart(', ') + ']' }
   return $kind + $tail
+}
+
+# Used only when Get-PhysicalDisk cannot say what the system disk is (old Windows, missing storage module).
+function Get-SystemDiskInfoWmi {
+  $dl = ("$env:SystemDrive").TrimEnd(':')
+  if ($dl.Length -ne 1) { return $null }
+  $ld = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='" + $dl + ":'") -ErrorAction Stop
+  $part = Get-CimAssociatedInstance -InputObject $ld -Association Win32_LogicalDiskToPartition -ErrorAction Stop
+  $drv = @(Get-CimAssociatedInstance -InputObject $part -Association Win32_DiskDriveToDiskPartition -ErrorAction Stop)
+  if ($drv.Count -eq 0) { return $null }
+  $d = $drv[0]
+  $model = ("$(Get-Prop $d 'Model' '')" -replace '\s+', ' ').Trim()
+  $iface = "$(Get-Prop $d 'InterfaceType' '')"
+  $guess = 'the model name does not say SSD or HDD'
+  if ($model -match '(?i)SSD|NVMe|Solid') { $guess = 'the model name says SSD/NVMe' }
+  $sz = Get-Prop $d 'Size' $null
+  $szTxt = ''
+  if ($null -ne $sz) { $szTxt = ', ' + (Format-Num ([double]$sz / 1GB) 0) + ' GB' }
+  return ('model ' + $model + ' [' + $iface + $szTxt + '], ' + $guess)
 }
 
 function Get-MachineFacts {
@@ -260,6 +304,42 @@ function Get-MachineFacts {
   $f['RamGB'] = Get-Safely { Format-Num ([double]$cs.TotalPhysicalMemory / 1GB) 1 } 'unknown'
   $f['RamFreeNowGB'] = Get-Safely { Format-Num ([double]$os.FreePhysicalMemory / 1MB) 1 } 'unknown'
   $f['SystemDisk'] = Get-Safely { Get-SystemDiskInfo } 'unknown (Windows did not answer)' 'disk type'
+  $f['SystemDiskShort'] = ("$($f['SystemDisk'])" -replace '\s*\[.*$', '')
+  if ("$($f['SystemDisk'])" -like 'unknown*') {
+    $alt = Get-Safely { Get-SystemDiskInfoWmi } $null 'disk type (WMI fallback)'
+    if ($null -ne $alt) { $f['SystemDisk'] = "$($f['SystemDisk'])" + ' | second source (WMI): ' + $alt; $f['SystemDiskShort'] = "$($f['SystemDiskShort'])" + ' / ' + $alt }
+  }
+  $f['ProcessorName'] = Get-Safely { (($cpu.Name -replace '\s+', ' ').Trim()) } 'unknown'
+  $f['PhysicalCores'] = Get-Safely {
+    $n = 0
+    foreach ($c in @(Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop)) { $n += [int]$c.NumberOfCores }
+    if ($n -lt 1) { throw 'no core count' }
+    "$n"
+  } 'unknown' 'physical cores'
+  $f['PowerPlan'] = Get-Safely {
+    $pp = @(Get-CimInstance -Namespace 'root/cimv2/power' -ClassName Win32_PowerPlan -Filter 'IsActive=True' -ErrorAction Stop)
+    if ($pp.Count -eq 0) { throw 'no active plan from WMI' }
+    ("$($pp[0].ElementName)").Trim()
+  } $null
+  if ($null -eq $f['PowerPlan']) {
+    $f['PowerPlan'] = Get-Safely {
+      $o = (@(& powercfg.exe /getactivescheme 2>$null) -join ' ')
+      $mm = [regex]::Match($o, '\(([^)]+)\)\s*\*?\s*$')
+      if (-not $mm.Success) { throw 'powercfg gave no plan name' }
+      $mm.Groups[1].Value.Trim()
+    } 'unknown' 'power plan'
+  }
+  $f['PowerSource'] = Get-Safely {
+    $b = @(Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop)
+    if ($b.Count -eq 0) { 'no battery reported (desktop PC, or Windows does not report one)' }
+    else {
+      $st = [int]$b[0].BatteryStatus
+      $pct = ''
+      try { if ($null -ne $b[0].EstimatedChargeRemaining) { $pct = ', charge ' + $b[0].EstimatedChargeRemaining + ' %' } } catch { }
+      if ($st -eq 1 -or $st -eq 4 -or $st -eq 5) { 'ON BATTERY' + $pct + ' (Windows battery status ' + $st + ')' }
+      else { 'plugged in (mains power)' + $pct + ' (Windows battery status ' + $st + ')' }
+    }
+  } 'unknown' 'power source'
 
   $f['SystemDriveFree'] = Get-Safely {
     if (-not $env:SystemDrive) { throw 'system drive not known' }
@@ -296,6 +376,16 @@ function Get-MachineFacts {
   if ($null -eq $rt) { $f['DefenderRealTime'] = 'unknown (Windows did not answer)' }
   elseif ($rt) { $f['DefenderRealTime'] = 'ON' }
   else { $f['DefenderRealTime'] = 'OFF' }
+
+  $f['DefenderExclusions'] = Get-Safely {
+    $mp = Get-MpPreference -ErrorAction Stop
+    $xp = Get-Prop $mp 'ExclusionPath' $null
+    $xe = Get-Prop $mp 'ExclusionExtension' $null
+    $xr = Get-Prop $mp 'ExclusionProcess' $null
+    if ((Test-NotVisible $xp) -or (Test-NotVisible $xe) -or (Test-NotVisible $xr)) { 'not visible (Windows shows the exclusions only to an administrator)' }
+    else { ('{0} excluded folders or files, {1} excluded file types, {2} excluded programs (only the numbers are written, never the list)' -f (Get-ItemCount $xp), (Get-ItemCount $xe), (Get-ItemCount $xr)) }
+  } 'unknown (Windows did not answer)' 'Defender exclusions'
+  $f['DefenderExclusionsShort'] = ("$($f['DefenderExclusions'])" -replace ' \(only the numbers.*$', '' -replace ' excluded ', ' ')
 
   $f['AntivirusProducts'] = Get-Safely {
     $names = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct | ForEach-Object { $_.displayName } | Select-Object -Unique)
@@ -769,6 +859,652 @@ function Save-ReportFile([string[]]$Lines, [string]$ComputerName) {
   return $null
 }
 
+# ------------------------------------------------------------------ v2: app data, WhatsApp log tally, running programs, disk wait
+# Everything below is read-only. Sizes come from the file system (name-less), the WhatsApp log is
+# read line by line and only five facts per line are kept (time, event name, code, attempt, appStatus).
+
+function Get-ItemCount($Value) {
+  if ($null -eq $Value) { return 0 }
+  $n = 0
+  foreach ($x in @($Value)) { if ($null -ne $x -and "$x" -ne '') { $n++ } }
+  return $n
+}
+
+function Test-NotVisible($Value) {
+  foreach ($x in @($Value)) { if ($null -ne $x -and "$x" -like 'N/A*') { return $true } }
+  return $false
+}
+
+# whole-number bytes with thousands separators (so no long digit run), then a short unit text
+function Format-Bytes($Bytes) {
+  if ($null -eq $Bytes) { return '-' }
+  $b = [int64]$Bytes
+  if ($b -ge 1GB) { $u = (Format-Num ($b / 1GB) 2) + ' GB' }
+  elseif ($b -ge 1MB) { $u = (Format-Num ($b / 1MB) 1) + ' MB' }
+  elseif ($b -ge 1KB) { $u = (Format-Num ($b / 1KB) 1) + ' KB' }
+  else { return ($b.ToString('N0', $Inv) + ' bytes') }
+  return ($b.ToString('N0', $Inv) + ' bytes (' + $u + ')')
+}
+
+function Format-Age([double]$Minutes) {
+  if ($Minutes -lt 120) { return ((Format-Num $Minutes 0) + ' min') }
+  if ($Minutes -lt 2880) { return ((Format-Num ($Minutes / 60) 1) + ' hours') }
+  return ((Format-Num ($Minutes / 1440) 1) + ' days')
+}
+
+# Text that came out of a file: remove addresses and long digit runs, keep only safe characters, cut to 64.
+function Protect-LogText([string]$Text, [int]$Max = 64) {
+  if ([string]::IsNullOrEmpty($Text)) { return '' }
+  $t = $Text
+  if ($t.Length -gt 256) { $t = $t.Substring(0, 256) }
+  $t = [regex]::Replace($t, '[^\s"''<>]+@[A-Za-z0-9.-]+', 'jid-removed')
+  $t = [regex]::Replace($t, '\+?\d[\d\s-]{5,}\d', 'digits-removed')
+  $t = [regex]::Replace($t, '\d{8,}', 'digits-removed')
+  $t = [regex]::Replace($t, '[^A-Za-z0-9_.:-]', '?')
+  if ($t.Length -gt $Max) { $t = $t.Substring(0, $Max) }
+  return $t
+}
+
+function Add-Count($Table, [string]$Key) {
+  if ($Table.ContainsKey($Key)) { $Table[$Key] = [int]$Table[$Key] + 1 } else { $Table[$Key] = 1 }
+}
+
+function Get-FolderSizeInfo([string]$Path, [double]$MaxSeconds = 40) {
+  $r = @{ Exists = $false; Bytes = [int64]0; Files = 0; Partial = $false }
+  if (-not [IO.Directory]::Exists($Path)) { return $r }
+  $r.Exists = $true
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $stack = New-Object System.Collections.Generic.Stack[string]
+  $stack.Push($Path)
+  while ($stack.Count -gt 0) {
+    if ($sw.Elapsed.TotalSeconds -gt $MaxSeconds -or $r.Files -gt 400000) { $r.Partial = $true; break }
+    $dir = $stack.Pop()
+    try {
+      $di = New-Object IO.DirectoryInfo($dir)
+      foreach ($fi in $di.EnumerateFiles()) { $r.Bytes += $fi.Length; $r.Files++ }
+      foreach ($sub in $di.EnumerateDirectories()) {
+        if (($sub.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        $stack.Push($sub.FullName)
+      }
+    } catch { }
+  }
+  return $r
+}
+
+function Get-SpoolFacts([string]$Root) {
+  $s = @{ Found = $false; Pending = 0; Quarantine = 0; Temp = 0; Other = 0; Bytes = [int64]0; OldestMin = $null; NewestMin = $null }
+  $dir = Join-Path $Root 'whatsapp-inbound-spool'
+  if (-not [IO.Directory]::Exists($dir)) { return $s }
+  $s.Found = $true
+  $oldest = $null
+  $newest = $null
+  $di = New-Object IO.DirectoryInfo($dir)
+  foreach ($fi in $di.EnumerateFiles()) {
+    $s.Bytes += $fi.Length
+    if ($fi.Name -match '^[0-9a-f]{64}\.json$') {
+      $s.Pending++
+      $t = $fi.LastWriteTimeUtc
+      if ($null -eq $oldest -or $t -lt $oldest) { $oldest = $t }
+      if ($null -eq $newest -or $t -gt $newest) { $newest = $t }
+    } elseif ($fi.Name -like '*.tmp') { $s.Temp++ } else { $s.Other++ }
+  }
+  $q = Join-Path $dir 'quarantine'
+  if ([IO.Directory]::Exists($q)) {
+    foreach ($fi in (New-Object IO.DirectoryInfo($q)).EnumerateFiles()) { $s.Quarantine++; $s.Bytes += $fi.Length }
+  }
+  $now = [DateTime]::UtcNow
+  if ($null -ne $oldest) { $s.OldestMin = [math]::Max(0, ($now - $oldest).TotalMinutes) }
+  if ($null -ne $newest) { $s.NewestMin = [math]::Max(0, ($now - $newest).TotalMinutes) }
+  return $s
+}
+
+# Known folder names of the app (from the product source); any other folder is only counted, never named.
+$script:KnownDataFolders = @('shops', 'system', 'logs', 'whatsapp-inbound-spool', 'whatsapp-media', 'migration-snapshots',
+  'migration-journal', 'recovery-journal', 'recovery-staging', 'recovery-rescue', 'shop-archives', 'shop-lifecycle-inbox',
+  'shop-lifecycle-journal', 'installation-root-recovery', 'recovery-kit-receipts', 'EBWebView', 'node-compile-cache')
+
+# Total size of one data folder plus one level of sub-folders (each file is visited once):
+# known folder names are listed with their size, unknown ones are only added up.
+function Get-FolderBreakdown([string]$Root, [double]$MaxSeconds) {
+  $b = @{ Total = @{ Exists = $true; Bytes = [int64]0; Files = 0; Partial = $false }; Parts = @(); OtherFolders = 0; OtherBytes = [int64]0 }
+  $parts = @()
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  try {
+    $di = New-Object IO.DirectoryInfo($Root)
+    foreach ($fi in $di.EnumerateFiles()) { $b.Total.Bytes += $fi.Length; $b.Total.Files++ }
+    foreach ($d in $di.EnumerateDirectories()) {
+      if (($d.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+      $left = [math]::Max(2.0, $MaxSeconds - $sw.Elapsed.TotalSeconds)
+      $sz = Get-FolderSizeInfo $d.FullName $left
+      $b.Total.Bytes += $sz.Bytes; $b.Total.Files += $sz.Files
+      if ($sz.Partial) { $b.Total.Partial = $true }
+      if ($script:KnownDataFolders -contains $d.Name) { $parts += , @{ Name = $d.Name; Bytes = $sz.Bytes; Files = $sz.Files; Partial = $sz.Partial } }
+      else { $b.OtherFolders++; $b.OtherBytes += $sz.Bytes }
+    }
+  } catch { Add-Problem 'list data folders' $_ }
+  $b.Parts = $parts
+  return $b
+}
+
+function Get-AppDataFacts([string[]]$Folders) {
+  $a = @{ Found = $false; Root = ''; Others = @(); Total = $null; Parts = @(); OtherFolders = 0; OtherBytes = [int64]0
+          Dbs = @(); StrayDb = 0; ShopsOtherFiles = 0; Spool = $null; Logs = $null; WaLog = $null; WaLog1 = $null }
+  $existing = @($Folders | Where-Object { $_ -and [IO.Directory]::Exists($_) })
+  if ($existing.Count -eq 0) { return $a }
+  $root = $null
+  foreach ($c in $existing) { if (-not $root -and [IO.Directory]::Exists((Join-Path $c 'shops'))) { $root = $c } }
+  foreach ($c in $existing) { if (-not $root -and [IO.Directory]::Exists((Join-Path $c 'logs'))) { $root = $c } }
+  foreach ($c in $existing) { if (-not $root -and [IO.File]::Exists((Join-Path $c 'startup-trace.json'))) { $root = $c } }
+  if (-not $root) { $root = $existing[0] }
+  $a.Found = $true
+  $a.Root = $root
+  $main = Get-FolderBreakdown $root 40
+  $a.Total = $main.Total
+  $a.Parts = $main.Parts
+  $a.OtherFolders = $main.OtherFolders
+  $a.OtherBytes = $main.OtherBytes
+  $a.Others = @()
+  foreach ($o in @($existing | Where-Object { $_ -ne $root })) {
+    $bd = Get-FolderBreakdown $o 25
+    $a.Others += , @{ Path = $o; Total = $bd.Total; Parts = $bd.Parts; OtherFolders = $bd.OtherFolders; OtherBytes = $bd.OtherBytes }
+  }
+
+  # shop database files: sizes only, never opened, names never written
+  $shops = Join-Path $root 'shops'
+  if ([IO.Directory]::Exists($shops)) {
+    $dbs = @()
+    $di = New-Object IO.DirectoryInfo($shops)
+    $files = @($di.EnumerateFiles())
+    foreach ($fi in $files) {
+      if ($fi.Name -like '*.db' -and -not $fi.Name.StartsWith('.')) {
+        $wal = 0; $shm = 0
+        foreach ($g in $files) {
+          if ($g.Name -eq ($fi.Name + '-wal')) { $wal = $g.Length }
+          if ($g.Name -eq ($fi.Name + '-shm')) { $shm = $g.Length }
+        }
+        $dbs += , @{ Db = $fi.Length; Wal = $wal; Shm = $shm }
+      } elseif ($fi.Name -notlike '*.db-wal' -and $fi.Name -notlike '*.db-shm') { $a.ShopsOtherFiles++ }
+    }
+    $a.Dbs = $dbs
+  }
+  try { foreach ($fi in (New-Object IO.DirectoryInfo($root)).EnumerateFiles('*.db*')) { $a.StrayDb++ } } catch { }
+
+  $a.Spool = Get-SpoolFacts $root
+  $logs = Join-Path $root 'logs'
+  if ([IO.Directory]::Exists($logs)) { $a.Logs = Get-FolderSizeInfo $logs 10 }
+  return $a
+}
+
+# ---- WhatsApp diagnostics log: counts only
+$script:RxAt = New-Object Text.RegularExpressions.Regex('^\{"at":"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{1,6})?Z","event":"((?:[^"\\]|\\.){0,200})"')
+$script:RxCode = New-Object Text.RegularExpressions.Regex('[,{]"code":"((?:[^"\\]|\\.){0,200})"')
+$script:RxAttempt = New-Object Text.RegularExpressions.Regex('[,{]"attempt":(\d{1,9})[,}]')
+$script:RxStatus = New-Object Text.RegularExpressions.Regex('[,{]"appStatus":(?:"((?:[^"\\]|\\.){0,200})"|(null))')
+$script:RxEvent = New-Object Text.RegularExpressions.Regex('^[a-z][a-z0-9._-]{0,63}$')
+
+function Get-Median([double[]]$Sorted) {
+  $n = $Sorted.Length
+  if ($n -eq 0) { return $null }
+  if ($n % 2 -eq 1) { return $Sorted[[int](($n - 1) / 2)] }
+  return (($Sorted[$n / 2 - 1] + $Sorted[$n / 2]) / 2.0)
+}
+
+function Get-WhatsAppTally([string[]]$Folders) {
+  $w = @{ Found = $false; Where = ''; Files = @(); Lines = 0; Unreadable = 0; Oversized = 0; First = ''; Last = ''
+          Events = @{}; Codes = @{}; Attempts = @{}; Status = @{}; Pairs = @{}; Note = '' }
+  $dirs = @()
+  foreach ($f in $Folders) { if ($f) { $dirs += (Join-Path $f 'logs') } }
+  foreach ($f in $Folders) { if ($f) { $dirs += $f } }
+  $fi = Find-DataFile $dirs 'whatsapp-diagnostics.log'
+  $fi1 = Find-DataFile $dirs 'whatsapp-diagnostics.log.1'
+  if ($null -eq $fi -and $null -eq $fi1) { return $w }
+  $w.Found = $true
+  $list = @()
+  if ($null -ne $fi1) { $list += $fi1 }
+  if ($null -ne $fi) { $list += $fi }
+  $w.Where = (Hide-Private ($list[$list.Count - 1].DirectoryName))
+  $seq = 0
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  foreach ($f in $list) {
+    $info = @{ Kind = $(if ($f.Name -like '*.1') { 'rotated copy (.1)' } else { 'current file' }); Bytes = $f.Length; Lines = 0 }
+    $w.Files += , $info
+    if ($f.Length -gt 6291456) { $w.Note = 'a log file is unexpectedly large (over 6 MB): not read'; continue }
+    $fs = $null
+    try {
+      $fs = New-Object IO.FileStream($f.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]'ReadWrite,Delete'))
+      $sr = New-Object IO.StreamReader($fs, (New-Object Text.UTF8Encoding($false)), $true)
+      while ($null -ne ($line = $sr.ReadLine())) {
+        if ($sw.Elapsed.TotalSeconds -gt 90) { $w.Note = 'stopped reading after 90 seconds'; break }
+        $info.Lines++
+        $w.Lines++
+        if ($line.Length -eq 0) { continue }
+        if ($line.Length -gt 8192) { $w.Oversized++; continue }
+        $m = $script:RxAt.Match($line)
+        if (-not $m.Success) { $w.Unreadable++; continue }
+        $seq++
+        $at = $m.Groups[1].Value
+        if ($w.First -eq '' -or [string]::CompareOrdinal($at, $w.First) -lt 0) { $w.First = $at }
+        if ($w.Last -eq '' -or [string]::CompareOrdinal($at, $w.Last) -gt 0) { $w.Last = $at }
+        $evRaw = $m.Groups[2].Value
+        $ev = 'other-event'
+        if ($script:RxEvent.IsMatch($evRaw)) { $ev = Protect-LogText $evRaw 64 }
+        Add-Count $w.Events $ev
+        $code = $null
+        $cm = $script:RxCode.Match($line)
+        if ($cm.Success) {
+          $code = Protect-LogText $cm.Groups[1].Value 64
+          if ($code -eq '') { $code = '(empty)' }
+          if ($ev -eq 'inbound.delivery-failed' -or $ev -eq 'spool.flush-failed') {
+            if (-not $w.Codes.ContainsKey($ev)) { $w.Codes[$ev] = @{} }
+            Add-Count $w.Codes[$ev] $code
+          }
+          $pk = $ev + '|' + $code
+          if ($w.Pairs.ContainsKey($pk)) { $w.Pairs[$pk].N++; $w.Pairs[$pk].Seq = $seq }
+          else { $w.Pairs[$pk] = @{ Event = $ev; Code = $code; N = 1; Seq = $seq } }
+        }
+        $am = $script:RxAttempt.Match($line)
+        if ($am.Success) {
+          if (-not $w.Attempts.ContainsKey($ev)) { $w.Attempts[$ev] = New-Object System.Collections.Generic.List[double] }
+          $w.Attempts[$ev].Add([double]$am.Groups[1].Value)
+        }
+        $sm = $script:RxStatus.Match($line)
+        if ($sm.Success) {
+          if ($sm.Groups[2].Success) { Add-Count $w.Status 'null (no answer from the app)' }
+          else {
+            $sv = Protect-LogText $sm.Groups[1].Value 64
+            if ($sv -eq '') { $sv = '(empty)' }
+            Add-Count $w.Status $sv
+          }
+        }
+      }
+    } catch { Add-Problem 'read WhatsApp log' $_ } finally { if ($null -ne $fs) { $fs.Dispose() } }
+  }
+  return $w
+}
+
+# ---- running programs, 10 s sample
+function Get-ProcSnapshot {
+  $h = @{}
+  foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+    try {
+      $id = [int]$p.Id
+      if ($id -eq 0) { continue }
+      $cpu = $null
+      try { $cpu = $p.CPU } catch { }
+      $path = ''
+      try { $path = "$($p.Path)" } catch { }
+      $ws = [int64]0
+      try { $ws = [int64]$p.WorkingSet64 } catch { }
+      $h[$id] = @{ Name = "$($p.ProcessName)"; Cpu = $cpu; Ws = $ws; Path = $path }
+    } catch { }
+  }
+  return $h
+}
+
+function Get-ProcClass($Info, [int]$Id, [string]$InstallDir, $WvOwn) {
+  $n = $Info.Name.ToLowerInvariant()
+  if ($n -eq 'msedgewebview2') {
+    if ($WvOwn.ContainsKey($Id)) { return 'msedgewebview2 (SahelFlow window)' }
+    return ''
+  }
+  if ($n -like 'sahelflow*') { return $Info.Name }
+  if ($InstallDir -and $Info.Path -and $Info.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase)) { return ($Info.Name + ' (from the SahelFlow folder)') }
+  return ''
+}
+
+function Test-AppRunning {
+  $pn = [IO.Path]::GetFileNameWithoutExtension($script:ExeToUse)
+  return (@(Get-Process -Name $pn -ErrorAction SilentlyContinue).Count -gt 0)
+}
+
+function Invoke-ProcessSample([int]$Seconds = 10, [string]$When = '') {
+  $r = @{ Ran = $false; When = $When; Seconds = 0; Rows = @(); WvAllCount = 0; WvAllMb = 0; WvAllCpu = 0; Others = @(); AllCpu = 0; Logical = 0
+          FreeRamGB = 'unknown'; AppRunning = $false; WvOwnKnown = $false }
+  $installDir = ''
+  try { $installDir = Split-Path -Parent $script:ExeToUse } catch { }
+  $wvOwn = @{}
+  try {
+    foreach ($w in @(Get-CimInstance -ClassName Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction Stop)) {
+      $cl = ''
+      try { $cl = "$($w.CommandLine)" } catch { }
+      if ($cl.IndexOf('com.sahelflow.desktop', [StringComparison]::OrdinalIgnoreCase) -ge 0) { $wvOwn[[int]$w.ProcessId] = $true }
+    }
+    $r.WvOwnKnown = $true
+  } catch { }
+  $r.AppRunning = Test-AppRunning
+  $t0 = Get-ProcSnapshot
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  Start-Sleep -Milliseconds ($Seconds * 1000)
+  $t1 = Get-ProcSnapshot
+  $r.Seconds = $sw.Elapsed.TotalSeconds
+  $r.Logical = [Environment]::ProcessorCount
+  $groups = @{}
+  $others = @{}
+  $wvAll = @{ N = 0; Ws = [int64]0; Cpu = 0.0 }
+  $all = 0.0
+  foreach ($id in @($t1.Keys)) {
+    $i1 = $t1[$id]
+    if ($id -eq $PID) { continue }
+    $d = $null
+    if ($null -ne $i1.Cpu) {
+      $c0 = 0.0
+      if ($t0.ContainsKey($id) -and $null -ne $t0[$id].Cpu) { $c0 = [double]$t0[$id].Cpu }
+      $d = [math]::Max(0.0, [double]$i1.Cpu - $c0)
+      $all += $d
+    }
+    if ($i1.Name.ToLowerInvariant() -eq 'msedgewebview2') {
+      $wvAll.N++; $wvAll.Ws += $i1.Ws
+      if ($null -ne $d) { $wvAll.Cpu += $d }
+    }
+    $cls = Get-ProcClass $i1 $id $installDir $wvOwn
+    if ($cls) {
+      if (-not $groups.ContainsKey($cls)) { $groups[$cls] = @{ Label = $cls; N = 0; Ws = [int64]0; Win = 0.0; Total = 0.0 } }
+      $g = $groups[$cls]
+      $g.N++; $g.Ws += $i1.Ws
+      if ($null -ne $d) { $g.Win += $d }
+      if ($null -ne $i1.Cpu) { $g.Total += [double]$i1.Cpu }
+    } elseif ($null -ne $d) {
+      $nm = $i1.Name
+      if (-not $others.ContainsKey($nm)) { $others[$nm] = 0.0 }
+      $others[$nm] = [double]$others[$nm] + $d
+    }
+  }
+  $r.Rows = @($groups.Values | Sort-Object @{ Expression = { $_.Ws }; Descending = $true })
+  $r.Others = @($others.GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Name }; Descending = $false } | Select-Object -First 5 | ForEach-Object { @{ Name = Protect-LogText ([string]$_.Name) 40; Cpu = [double]$_.Value } })
+  $r.WvAllCount = $wvAll.N
+  $r.WvAllMb = $wvAll.Ws / 1MB
+  $r.WvAllCpu = $wvAll.Cpu
+  $r.AllCpu = $all
+  $r.FreeRamGB = Get-Safely { Format-Num ([double](Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB) 1 } 'unknown'
+  $r.Ran = $true
+  return $r
+}
+
+# ---- disk wait probe: 30 small writes, each forced through to the disk, in one file in %TEMP%
+function Invoke-LatencyProbe([int]$Count = 30, [double]$MaxSeconds = 30) {
+  $res = @{ Ran = $false; N = 0; Min = $null; P50 = $null; P95 = $null; Max = $null; Deleted = $false; Note = ''; Drive = '' }
+  $dir = Join-Path ([IO.Path]::GetTempPath()) ('sahelflow-pc-check-probe-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+  $file = Join-Path $dir 'probe.bin'
+  $res.Drive = Get-Safely { Split-Path -Qualifier $dir } 'unknown'
+  $fs = $null
+  try {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $buf = New-Object byte[] 4096
+    (New-Object Random 5).NextBytes($buf)
+    $fs = New-Object IO.FileStream($file, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+    $times = New-Object System.Collections.Generic.List[double]
+    $all = [Diagnostics.Stopwatch]::StartNew()
+    for ($i = 0; $i -lt $Count; $i++) {
+      if ($all.Elapsed.TotalSeconds -gt $MaxSeconds) { $res.Note = 'stopped early: more than 30 seconds'; break }
+      $sw = [Diagnostics.Stopwatch]::StartNew()
+      $fs.Write($buf, 0, $buf.Length)
+      $fs.Flush($true)
+      $times.Add($sw.Elapsed.TotalMilliseconds)
+    }
+    $s = $times.ToArray()
+    [Array]::Sort($s)
+    $n = $s.Length
+    if ($n -gt 0) {
+      $res.N = $n
+      $res.Min = $s[0]
+      $res.P50 = $s[[int][math]::Floor($n * 50 / 100)]
+      $res.P95 = $s[[int][math]::Floor($n * 95 / 100)]
+      $res.Max = $s[$n - 1]
+      $res.Ran = $true
+    }
+  } catch {
+    Add-Problem 'disk wait probe' $_
+  } finally {
+    if ($null -ne $fs) { try { $fs.Dispose() } catch { } }
+    try {
+      if ((Split-Path -Leaf $dir) -like 'sahelflow-pc-check-probe-*' -and (Test-Path -LiteralPath $dir)) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop }
+    } catch { Add-Problem 'remove probe file' $_ }
+    $res.Deleted = -not (Test-Path -LiteralPath $dir)
+  }
+  return $res
+}
+
+# ---- report pieces for the new sections
+function Add-FolderLines($Total, $Parts, [int]$OtherFolders, $OtherBytes) {
+  $partial = ''
+  if ($Total.Partial) { $partial = ' (counting stopped early: at least this much)' }
+  Add-Line ('Size of the folder   : ' + (Format-Bytes $Total.Bytes) + ', ' + $Total.Files + ' files' + $partial)
+  foreach ($p in $Parts) {
+    $pp = ''
+    if ($p.Partial) { $pp = ' (partial)' }
+    Add-Line ('  {0,-28}: {1}, {2} files{3}' -f $p.Name, (Format-Bytes $p.Bytes), $p.Files, $pp)
+  }
+  if ($OtherFolders -gt 0) { Add-Line ('  {0,-28}: {1}' -f ('other folders: ' + $OtherFolders), (Format-Bytes $OtherBytes)) }
+}
+
+function Add-AppDataLines($A) {
+  if ($null -eq $A -or -not $A.Found) {
+    Add-Line 'No SahelFlow data folder was found (looked in the folders named in the start-up section).'
+    return
+  }
+  Add-Line ('Data folder          : ' + (Hide-Private $A.Root))
+  Add-FolderLines $A.Total $A.Parts $A.OtherFolders $A.OtherBytes
+  foreach ($o in $A.Others) {
+    Add-Line ('Second data folder   : ' + (Hide-Private $o.Path))
+    Add-FolderLines $o.Total $o.Parts $o.OtherFolders $o.OtherBytes
+  }
+  $k = 0
+  foreach ($d in $A.Dbs) {
+    $k++
+    Add-Line ('Shop database {0}      : {1}; write-ahead file (-wal) {2}; shared-memory file (-shm) {3}' -f $k, (Format-Bytes $d.Db), (Format-Bytes $d.Wal), (Format-Bytes $d.Shm))
+  }
+  if ($A.Dbs.Count -eq 0) { Add-Line 'Shop database        : no .db file found in the shops folder' }
+  if ($A.StrayDb -gt 0) { Add-Line ('Other .db files in the data folder itself: ' + $A.StrayDb) }
+  if ($null -ne $A.Logs) { Add-Line ('Log files (logs)     : ' + (Format-Bytes $A.Logs.Bytes) + ' in ' + $A.Logs.Files + ' files') }
+  else { Add-Line 'Log files (logs)     : there is no logs folder' }
+  $s = $A.Spool
+  Add-Line ''
+  Add-Line '-- WhatsApp inbound spool (messages saved on this PC that the app has not taken yet) --'
+  if ($null -eq $s -or -not $s.Found) { Add-Line 'No whatsapp-inbound-spool folder found: nothing is waiting on this PC.' }
+  else {
+    Add-Line ('Records waiting      : ' + $s.Pending)
+    if ($s.Pending -gt 0) {
+      Add-Line ('Oldest file          : last written ' + (Format-Age $s.OldestMin) + ' ago; newest file last written ' + (Format-Age $s.NewestMin) + ' ago')
+      Add-Line '  (the app rewrites a waiting file at every failed try, so this is the time of the last try, not the arrival time)'
+    }
+    Add-Line ('In quarantine        : ' + $s.Quarantine + ' files; unfinished temporary files: ' + $s.Temp + '; other files: ' + $s.Other)
+    Add-Line ('Spool folder size    : ' + (Format-Bytes $s.Bytes))
+    Add-Line '  (file names and contents were not read or written here)'
+  }
+}
+
+function Add-WhatsAppLines($W) {
+  if ($null -eq $W -or -not $W.Found) {
+    Add-Line 'No whatsapp-diagnostics.log was found on this PC.'
+    Add-Line 'That means the WhatsApp part has not written a log here (or SahelFlow keeps its data in another folder).'
+    return
+  }
+  Add-Line ('Log folder           : ' + $W.Where)
+  foreach ($f in $W.Files) { Add-Line ('  {0,-22}: {1}, {2} lines' -f $f.Kind, (Format-Bytes $f.Bytes), $f.Lines) }
+  if ($W.Note) { Add-Line ('  note: ' + $W.Note) }
+  $span = '-'
+  if ($W.First -ne '') { $span = ($W.First.Replace('T', ' ') + ' to ' + $W.Last.Replace('T', ' ') + ' UTC') }
+  Add-Line ('First and last entry : ' + $span)
+  if ($W.Unreadable -gt 0 -or $W.Oversized -gt 0) { Add-Line ('Lines not understood  : ' + $W.Unreadable + ' (and ' + $W.Oversized + ' too long to read)') }
+  Add-Line '(counts only: no message, phone number, name or other text from the log is copied here)'
+  Add-Line ''
+  Add-Line 'Events (how many times each event is in the log):'
+  $ev = @($W.Events.GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Name }; Descending = $false })
+  $shown = 0
+  foreach ($e in $ev) {
+    if ($shown -ge 40) { break }
+    Add-Line ('  {0,-44} {1,7}' -f $e.Name, $e.Value)
+    $shown++
+  }
+  if ($ev.Count -gt $shown) { Add-Line ('  ... and ' + ($ev.Count - $shown) + ' more events') }
+  Add-Line ''
+  Add-Line 'Error codes of the two failure events:'
+  foreach ($en in @('inbound.delivery-failed', 'spool.flush-failed')) {
+    $tot = 0
+    if ($W.Events.ContainsKey($en)) { $tot = $W.Events[$en] }
+    Add-Line ('  ' + $en + ': ' + $tot + ' in the log')
+    if ($W.Codes.ContainsKey($en)) {
+      $cs = @($W.Codes[$en].GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Name }; Descending = $false })
+      $shown = 0
+      foreach ($c in $cs) {
+        if ($shown -ge 25) { break }
+        Add-Line ('      code {0,-40} {1,7}' -f $c.Name, $c.Value)
+        $shown++
+      }
+      if ($cs.Count -gt $shown) { Add-Line ('      ... and ' + ($cs.Count - $shown) + ' more codes') }
+    }
+  }
+  Add-Line ''
+  Add-Line 'Attempt number (minimum / median / maximum), events that carry one:'
+  if (@($W.Attempts.Keys).Count -eq 0) { Add-Line '  none in the log' }
+  foreach ($k in @($W.Attempts.Keys | Sort-Object)) {
+    $arr = $W.Attempts[$k].ToArray()
+    [Array]::Sort($arr)
+    $med = Get-Median $arr
+    $medTxt = $med.ToString('0.#', $Inv)
+    Add-Line ('  {0,-30} n={1}: {2} / {3} / {4}' -f $k, $arr.Length, $arr[0].ToString('0', $Inv), $medTxt, $arr[$arr.Length - 1].ToString('0', $Inv))
+  }
+  Add-Line ''
+  Add-Line 'appStatus (what the app answered), counts:'
+  if (@($W.Status.Keys).Count -eq 0) { Add-Line '  none in the log' }
+  foreach ($s in @($W.Status.GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Name }; Descending = $false })) {
+    Add-Line ('  {0,-44} {1,7}' -f $s.Name, $s.Value)
+  }
+  Add-Line ''
+  Add-Line 'The last 20 different (event, code) pairs, newest first, with how many times each is in the log:'
+  $pairs = @($W.Pairs.Values | Sort-Object @{ Expression = { $_.Seq }; Descending = $true } | Select-Object -First 20)
+  if ($pairs.Count -eq 0) { Add-Line '  no event with a code in the log' }
+  foreach ($p in $pairs) { Add-Line ('  {0,-30} {1,-30} {2,7}' -f $p.Event, $p.Code, $p.N) }
+}
+
+function Add-ProcessLines($P) {
+  if ($null -eq $P -or -not $P.Ran) { Add-Line 'The running-programs sample did not run (see problems below).'; return }
+  Add-Line ('When                : ' + $P.When + '; window ' + (Format-Num $P.Seconds 1) + ' s on ' + $P.Logical + ' logical processors')
+  if (-not $P.AppRunning) { Add-Line 'SahelFlow was NOT running at the start of the window.' }
+  Add-Line ('Free memory (RAM)    : ' + $P.FreeRamGB + ' GB at the end of the window')
+  Add-Line 'SahelFlow programs (memory = working set; CPU = processor seconds used inside the window; total = since the program started):'
+  if ($P.Rows.Count -eq 0) { Add-Line '  none found' }
+  $sumMb = 0.0; $sumCpu = 0.0
+  foreach ($g in $P.Rows) {
+    $mb = $g.Ws / 1MB
+    $sumMb += $mb; $sumCpu += $g.Win
+    Add-Line ('  {0,-40} x{1,-3} {2,8} MB   CPU {3,6} s   (total {4} s)' -f $g.Label, $g.N, (Format-Num $mb 1), (Format-Num $g.Win 2), (Format-Num $g.Total 1))
+  }
+  if ($P.Rows.Count -gt 1) { Add-Line ('  all SahelFlow programs together          {0,8} MB   CPU {1,6} s' -f (Format-Num $sumMb 1), (Format-Num $sumCpu 2)) }
+  if (-not $P.WvOwnKnown) { Add-Line '  (Windows did not say which WebView2 processes belong to SahelFlow; see the line below)' }
+  Add-Line ('All msedgewebview2 programs (any application): {0} processes, {1} MB, CPU {2} s' -f $P.WvAllCount, (Format-Num $P.WvAllMb 1), (Format-Num $P.WvAllCpu 2))
+  $avail = $P.Logical * $P.Seconds
+  Add-Line ('All programs together: CPU {0} s used of {1} s available in the window (only programs Windows lets us read; this script excluded)' -f (Format-Num $P.AllCpu 1), (Format-Num $avail 0))
+  $o = @($P.Others | ForEach-Object { $_.Name + ' (' + (Format-Num $_.Cpu 1) + ' s)' })
+  if ($o.Count -eq 0) { Add-Line 'Five busiest other programs: none used measurable CPU' }
+  else { Add-Line ('Five busiest other programs (names only): ' + ($o -join ', ')) }
+}
+
+function Add-ProbeLine([string]$Label, $X) {
+  if ($null -eq $X) { Add-Line ($Label + ': not run'); return }
+  if (-not $X.Ran) { Add-Line ($Label + ': did not complete (see problems below)'); return }
+  $note = ''
+  if ($X.Note) { $note = ' (' + $X.Note + ')' }
+  Add-Line ('{0}: n={1}, p50 {2} ms, p95 {3} ms, max {4} ms; probe file deleted: {5}{6}' -f $Label, $X.N, (Format-Num $X.P50 2), (Format-Num $X.P95 2), (Format-Num $X.Max 2), $(if ($X.Deleted) { 'yes' } else { 'NO' }), $note)
+}
+
+# ---- the 8-line summary at the top of the report
+function Get-SummaryLines {
+  $L = @()
+  $f = $script:Facts
+  # 1 the PC
+  try {
+    $bat = "$($f['PowerSource'])"
+    if ($bat -like 'no battery*') { $bat = 'no battery' }
+    $L += ('1) This PC        : {0}; {1} cores / {2} threads; {3} GB RAM ({4} GB free); system disk {5}; {6}; power: {7}; plan: {8}' -f $f['ProcessorName'], $f['PhysicalCores'], $f['LogicalProcessors'], $f['RamGB'], $f['RamFreeNowGB'], $f['SystemDiskShort'], $f['SystemDriveFree'], $bat, $f['PowerPlan'])
+  } catch { $L += '1) This PC        : not available' }
+  # 2 protection
+  try {
+    $L += ('2) Protection     : Windows Defender real-time {0}; exclusions: {1}; antivirus products: {2}' -f $f['DefenderRealTime'], $f['DefenderExclusionsShort'], $f['AntivirusProducts'])
+  } catch { $L += '2) Protection     : not available' }
+  # 3 app data
+  try {
+    $a = $script:AppData
+    if ($null -eq $a -or -not $a.Found) { $L += '3) App data       : no SahelFlow data folder found' }
+    else {
+      $db = 'no shop database file found'
+      if ($a.Dbs.Count -gt 0) {
+        $sumDb = [int64]0; $sumWal = [int64]0
+        foreach ($d in $a.Dbs) { $sumDb += $d.Db; $sumWal += $d.Wal }
+        $db = ('shop database ' + (Format-Bytes $sumDb) + ', write-ahead file ' + (Format-Bytes $sumWal))
+      }
+      $lg = 'no logs folder'
+      if ($null -ne $a.Logs) { $lg = ('logs ' + (Format-Bytes $a.Logs.Bytes)) }
+      $second = ''
+      foreach ($o in $a.Others) { $second += ('; second folder ' + (Format-Bytes $o.Total.Bytes)) }
+      $L += ('3) App data       : data folder ' + (Format-Bytes $a.Total.Bytes) + $second + '; ' + $db + '; ' + $lg)
+    }
+  } catch { $L += '3) App data       : not available' }
+  # 4 spool
+  try {
+    $a = $script:AppData
+    if ($null -eq $a -or -not $a.Found -or $null -eq $a.Spool -or -not $a.Spool.Found) { $L += '4) WhatsApp queue : no inbound spool folder (nothing waiting on this PC)' }
+    else {
+      $s = $a.Spool
+      $age = ''
+      if ($s.Pending -gt 0) { $age = ', oldest file last tried ' + (Format-Age $s.OldestMin) + ' ago' }
+      $L += ('4) WhatsApp queue : {0} messages saved and waiting{1}; {2} in quarantine' -f $s.Pending, $age, $s.Quarantine)
+    }
+  } catch { $L += '4) WhatsApp queue : not available' }
+  # 5 log
+  try {
+    $w = $script:WaTally
+    if ($null -eq $w -or -not $w.Found) { $L += '5) WhatsApp log   : no whatsapp-diagnostics.log found on this PC' }
+    else {
+      $fail = 0
+      foreach ($en in @('inbound.delivery-failed', 'spool.flush-failed')) { if ($w.Events.ContainsKey($en)) { $fail += [int]$w.Events[$en] } }
+      $top = @()
+      foreach ($en in @('inbound.delivery-failed', 'spool.flush-failed')) {
+        if ($w.Codes.ContainsKey($en)) {
+          foreach ($c in @($w.Codes[$en].GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Name }; Descending = $false } | Select-Object -First 3)) { $top += ($c.Name + ' x' + $c.Value) }
+        }
+      }
+      $tt = 'no failure codes'
+      if ($top.Count -gt 0) { $tt = 'most frequent codes: ' + ($top -join ', ') }
+      $L += ('5) WhatsApp log   : {0} lines from {1} to {2} UTC; {3} delivery or flush failures; {4}' -f $w.Lines, $w.First.Replace('T', ' '), $w.Last.Replace('T', ' '), $fail, $tt)
+    }
+  } catch { $L += '5) WhatsApp log   : not available' }
+  # 6 load
+  try {
+    $p = $script:ProcSample
+    if ($null -eq $p -or -not $p.Ran) { $L += '6) Load           : not measured' }
+    else {
+      $mb = 0.0; $cpu = 0.0
+      foreach ($g in $p.Rows) { $mb += ($g.Ws / 1MB); $cpu += $g.Win }
+      $oth = @($p.Others | Select-Object -First 3 | ForEach-Object { $_.Name })
+      $othTxt = 'none busy'
+      if ($oth.Count -gt 0) { $othTxt = ($oth -join ', ') }
+      $run = ''
+      if (-not $p.AppRunning) { $run = ' (SahelFlow was not running)' }
+      $L += ('6) Load           : {0}: SahelFlow programs use {1} MB and {2} CPU-seconds in {3} s on {4} threads{5}; busiest others: {6}' -f $p.When, (Format-Num $mb 0), (Format-Num $cpu 1), (Format-Num $p.Seconds 0), $p.Logical, $run, $othTxt)
+    }
+  } catch { $L += '6) Load           : not available' }
+  # 7 disk wait
+  try {
+    $x = $script:ProbeIdle
+    $y = $script:ProbeBusy
+    $t = ''
+    if ($null -ne $x -and $x.Ran) { $t = ('30 forced small writes: p50 {0} ms, p95 {1} ms, max {2} ms' -f (Format-Num $x.P50 1), (Format-Num $x.P95 1), (Format-Num $x.Max 1)) }
+    else { $t = 'not measured' }
+    if ($null -ne $y -and $y.Ran) { $t += ('; with SahelFlow running: p50 {0} ms, p95 {1} ms, max {2} ms' -f (Format-Num $y.P50 1), (Format-Num $y.P95 1), (Format-Num $y.Max 1)) }
+    $L += ('7) Disk wait      : ' + $t + ' (our datacenter test disk: p50 about 5 ms)')
+  } catch { $L += '7) Disk wait      : not available' }
+  # 8 start-up
+  try {
+    $parts = @()
+    foreach ($r in $script:Recs) { $parts += ($r.Label + ': ' + $r.Verdict) }
+    if ($parts.Count -eq 0) { $parts = @('no start-up record') }
+    $L += ('8) Start-up       : ' + ($parts -join ' | '))
+  } catch { $L += '8) Start-up       : not available' }
+  return $L
+}
+
+
 # ------------------------------------------------------------------ main
 $computer = 'unknown-pc'
 try { $computer = [Environment]::MachineName } catch { }
@@ -790,6 +1526,12 @@ if ($options.Count -eq 0) { $options += '(none: read last launch)' }
 $facts = $null
 $recs = @()
 $disk = $null
+$AppData = $null
+$WaTally = $null
+$ProcSample = $null
+$ProbeIdle = $null
+$ProbeBusy = $null
+$ProbeIdleOpen = $false
 $wvRead = $null
 $wvAfterLaunch = $false
 $folders = Get-DataFolders
@@ -819,13 +1561,21 @@ try {
     Tell 'Step 1: facts about this PC (on a slow PC this can take a minute) ...'
     $facts = Get-MachineFacts
 
+    Tell ''
+    Tell 'Step 2: size of the SahelFlow data folders and counts from the WhatsApp log (nothing is opened or copied; on a slow disk this can take a minute) ...'
+    try { $AppData = Get-AppDataFacts $folders } catch { Add-Problem 'app data folders' $_ }
+    try { $WaTally = Get-WhatsAppTally $folders } catch { Add-Problem 'WhatsApp log' $_ }
+    Tell 'Quick disk wait test: 30 small writes forced to the disk ...'
+    try { $ProbeIdleOpen = Test-AppRunning } catch { }
+    try { $ProbeIdle = Invoke-LatencyProbe 30 30 } catch { Add-Problem 'disk wait probe' $_ }
+
     if ($Launch) {
       if (-not (Test-Path -LiteralPath $script:ExeToUse -PathType Leaf)) {
         Tell ('SahelFlow was not found at ' + $script:ExeToUse + ' - no launch test.')
         $recs = @(@{ Label = 'Launch 1'; Started = $false; Verdict = 'not started: sahelflow.exe not found'; Facts = $null; Diag = $null; Wall = $null; UptimeMin = $null; TraceFile = ''; LaunchLocal = ''; EndReason = 'no-exe' })
       } else {
         Tell ''
-        Tell 'Step 2: guided launch. For the cold number the PC should have been restarted a few minutes ago.'
+        Tell 'Step 3: guided launch. For the cold number the PC should have been restarted a few minutes ago.'
         $first = Invoke-GuidedLaunch 'Launch 1 (first)' $script:ExeToUse $folders
         $recs += , $first
         if ($Twice -and $first.Started) {
@@ -835,7 +1585,7 @@ try {
       }
     } else {
       Tell ''
-      Tell 'Step 2: reading the start-up file of the last launch (no launch; add -Launch to measure a new one) ...'
+      Tell 'Step 3: reading the start-up file of the last launch (no launch; add -Launch to measure a new one) ...'
       $rec = @{ Label = 'Last launch'; Started = $false; Verdict = ''; Facts = $null; Diag = $null; Wall = $null; UptimeMin = $null; TraceFile = ''; LaunchLocal = ''; EndReason = '' }
       $fi = Find-DataFile $folders 'startup-trace.json'
       if ($null -eq $fi) {
@@ -858,6 +1608,19 @@ try {
 
     foreach ($r in $recs) { if ($r.TraceFile -and -not $traceUsed) { $traceUsed = $r.TraceFile } }
 
+    # running programs for 10 seconds, taken right after the last launch while SahelFlow is still open
+    $lastLaunched = $false
+    if ($Launch -and $recs.Count -gt 0) { $lastLaunched = [bool]$recs[$recs.Count - 1].Started }
+    $when = 'now (no launch in this run)'
+    if ($lastLaunched) { $when = 'right after ' + $recs[$recs.Count - 1].Label + ' ended' }
+    Tell ''
+    Tell 'Step 4: watching the running programs for 10 seconds. Please do not touch the PC ...'
+    try { $ProcSample = Invoke-ProcessSample 10 $when } catch { Add-Problem 'running programs sample' $_ }
+    if ($null -ne $ProcSample -and $ProcSample.AppRunning) {
+      Tell 'Disk wait test again, with SahelFlow open ...'
+      try { $ProbeBusy = Invoke-LatencyProbe 30 30 } catch { Add-Problem 'disk wait probe (app open)' $_ }
+    }
+
     if ($ReadWebView2) {
       $wvAfterLaunch = [bool]($Launch -and @($recs | Where-Object { $_.Started }).Count -gt 0)
       if ($wvAfterLaunch) { Wait-Enter 'Before the WebView2 read: close SahelFlow if it is open.' }
@@ -872,7 +1635,7 @@ try {
       $appOpenForDisk = (@(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($script:ExeToUse)) -ErrorAction SilentlyContinue).Count -gt 0)
     }
     Tell ''
-    Tell 'Step 3: disk speed test (about 10 to 60 seconds) ...'
+    Tell 'Step 5: disk speed test (about 10 to 60 seconds) ...'
     $disk = Invoke-DiskTests
     if ($appOpenForDisk) { $disk.Note = ($disk.Note + ' SahelFlow was still open during the disk test.').Trim() }
   }
@@ -885,6 +1648,11 @@ Add-Line 'SahelFlow PC check'
 Add-Line ('Script version     : ' + $ScriptVersion + '   options: ' + ($options -join ' '))
 Add-Line ('Computer name      : ' + $computer)
 Add-Line ('Run at (PC clock)  : ' + (Format-Local (Get-Date)))
+if (-not $TraceFile) {
+  Add-Line ''
+  Add-Line '== SUMMARY (8 lines) =='
+  foreach ($sl in (Get-SummaryLines)) { Add-Line $sl }
+}
 Add-Line ''
 Add-Line '== RESULT =='
 foreach ($r in $recs) { Add-Line ('{0,-20}: {1}' -f $r.Label, $r.Verdict) }
@@ -905,16 +1673,40 @@ if ($null -ne $facts) {
   Add-Line '== THIS PC =='
   Add-Line ('Windows              : ' + $facts['Windows'])
   Add-Line ('Processor            : ' + $facts['Processor'])
-  Add-Line ('Logical processors   : ' + $facts['LogicalProcessors'])
+  Add-Line ('Cores / threads      : ' + $facts['PhysicalCores'] + ' physical cores, ' + $facts['LogicalProcessors'] + ' logical processors')
   Add-Line ('Memory (RAM)         : ' + $facts['RamGB'] + ' GB installed, ' + $facts['RamFreeNowGB'] + ' GB free when the script started')
   Add-Line ('System disk type     : ' + $facts['SystemDisk'])
   Add-Line ('System drive space   : ' + $facts['SystemDriveFree'])
   Add-Line ('Windows started at   : ' + $facts['WindowsStarted'] + ' (on for ' + $facts['PcOnForMinutes'] + ' min when the script started)')
   Add-Line ('WebView2 runtime     : ' + $facts['WebView2'])
+  Add-Line ('Power plan           : ' + $facts['PowerPlan'])
+  Add-Line ('Power source         : ' + $facts['PowerSource'])
   Add-Line ('Defender real-time   : ' + $facts['DefenderRealTime'])
-  Add-Line ('Antivirus products   : ' + $facts['AntivirusProducts'])
+  Add-Line ('Defender exclusions  : ' + $facts['DefenderExclusions'])
+  Add-Line ('Antivirus products   : ' + $facts['AntivirusProducts'] + '  (display names only)')
   Add-Line ('SahelFlow installed  : ' + $facts['SahelFlowInstalledList'])
   Add-Line ('SahelFlow exe        : ' + $facts['SahelFlowExeVersion'])
+}
+
+if (-not $TraceFile) {
+  Add-Line ''
+  Add-Line '== APP DATA (sizes and counts only) =='
+  Add-AppDataLines $AppData
+  Add-Line ''
+  Add-Line '== WHATSAPP DIAGNOSTICS LOG (counts only) =='
+  Add-WhatsAppLines $WaTally
+  Add-Line ''
+  Add-Line '== RUNNING PROGRAMS (10 second sample) =='
+  Add-ProcessLines $ProcSample
+  Add-Line ''
+  Add-Line '== DISK WAIT PROBE (30 small writes, each forced to the disk) =='
+  $idleLabel = 'Before SahelFlow was started by this check'
+  if ($ProbeIdleOpen) { $idleLabel = 'At the start (SahelFlow was ALREADY open)' }
+  Add-ProbeLine $idleLabel $ProbeIdle
+  if ($null -ne $ProbeBusy) { Add-ProbeLine 'With SahelFlow open (after the sample)' $ProbeBusy }
+  else { Add-Line 'With SahelFlow open: not run (SahelFlow was not running after the sample)' }
+  Add-Line ('Drive of the probe file: ' + $(if ($null -ne $ProbeIdle) { $ProbeIdle.Drive } else { 'unknown' }) + ' (the temporary folder); the probe file is deleted at once.')
+  Add-Line 'Compare: our datacenter test disk gives p50 about 5 ms, p95 8 to 60 ms for a forced 4 KB write.'
 }
 
 if ($null -ne $disk) {

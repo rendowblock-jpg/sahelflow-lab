@@ -74,7 +74,7 @@ $watch = {
             $ready = (@($ev | Where-Object { $_.stage -eq 'ui-ready' -or $_.stage -eq 'ui-blocked' }).Count -gt 0)
             if ($ready -and -not $seen.ContainsKey($first)) {
               $seen[$first] = $true
-              Start-Sleep -Seconds 2
+              Start-Sleep -Seconds $(if ($closed -ge 1) { 30 } else { 2 })
               Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
               $closed++
               $log += ('watcher: closed the app after launch with first event ' + $first + ', watcher clock ' + [math]::Round($sw.Elapsed.TotalSeconds, 1) + ' s')
@@ -124,6 +124,49 @@ if ($Step -eq 's2') {
 if ($Step -eq 's3') { Invoke-Check 's3-default' '-NoPause -NoPrompt' 600 }
 if ($Step -eq 's3b') { Invoke-Check 's3b-launch-notinstalled' '-Launch -Twice -NoPause -NoPrompt' 600 }
 if ($Step -eq 's4') { Invoke-Check 's4-readwebview2' '-ReadWebView2 -NoPause -NoPrompt' 900 }
+
+if ($Step -eq 's7') {
+  # Plant SYNTHETIC data into the real data folders (nothing real exists on a fresh runner), run the check without launching, compare with expected, clean up.
+  $dd = Join-Path $env:APPDATA 'com.sahelflow.desktop'
+  $ld = Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'
+  Add-Summary ('S7 [{0}] data folders existed before planting: roaming {1}, local {2}' -f $tag, (Test-Path -LiteralPath $dd), (Test-Path -LiteralPath $ld))
+  foreach ($d in @('logs', 'shops', 'whatsapp-inbound-spool\quarantine', 'system', 'PersonLikeFolderName')) { New-Item -ItemType Directory -Force -Path (Join-Path $dd $d) | Out-Null }
+  New-Item -ItemType Directory -Force -Path (Join-Path $ld 'EBWebView'), (Join-Path $ld 'node-compile-cache') | Out-Null
+  Copy-Item -LiteralPath (Join-Path $root 'testdata\wa\whatsapp-diagnostics.log') -Destination (Join-Path $dd 'logs')
+  Copy-Item -LiteralPath (Join-Path $root 'testdata\wa\whatsapp-diagnostics.log.1') -Destination (Join-Path $dd 'logs')
+  $rng = New-Object Random 42
+  function New-Blob([string]$Path, [int]$Bytes) { $b = New-Object byte[] $Bytes; $rng.NextBytes($b); [IO.File]::WriteAllBytes($Path, $b) }
+  New-Blob (Join-Path $dd 'shops\shop-0001.db') (2 * 1024 * 1024)
+  New-Blob (Join-Path $dd 'shops\shop-0001.db-wal') (300 * 1024)
+  New-Blob (Join-Path $dd 'shops\shop-0001.db-shm') (32 * 1024)
+  New-Blob (Join-Path $dd 'system\x.bin') 10000
+  New-Blob (Join-Path $dd 'PersonLikeFolderName\y.bin') 5000
+  New-Blob (Join-Path $ld 'EBWebView\cache.bin') (1024 * 1024)
+  New-Blob (Join-Path $ld 'node-compile-cache\c.bin') 50000
+  $now = [DateTime]::UtcNow
+  for ($i = 0; $i -lt 127; $i++) {
+    $b = New-Object byte[] 32; $rng.NextBytes($b)
+    $name = (($b | ForEach-Object { $_.ToString('x2') }) -join '')
+    $f = Join-Path $dd ('whatsapp-inbound-spool\' + $name + '.json')
+    [IO.File]::WriteAllText($f, '{"fake":"spool record"}')
+    (Get-Item -LiteralPath $f).LastWriteTimeUtc = $now.AddMinutes(-(3209 - $i * 25))
+  }
+  for ($i = 0; $i -lt 2; $i++) { $b = New-Object byte[] 32; $rng.NextBytes($b); [IO.File]::WriteAllText((Join-Path $dd ('whatsapp-inbound-spool\quarantine\' + (($b | ForEach-Object { $_.ToString('x2') }) -join '') + '.json')), '{}') }
+  [IO.File]::WriteAllText((Join-Path $dd 'whatsapp-inbound-spool\.abc.tmp'), 'x')
+  Invoke-Check 's7-planted' '-NoPause -NoPrompt' 300
+  $rep = Get-ChildItem -LiteralPath $out -Filter 's7-planted.report*.txt' | Select-Object -First 1
+  $py = Get-Command python -ErrorAction SilentlyContinue
+  if ($rep -and $py) {
+    $cmp = & python (Join-Path $root 'ci\check_wa_report.py') $rep.FullName (Join-Path $root 'testdata\wa\expected.json') 2>&1
+    Save-Text ($tag + '-s7-compare.txt') ($cmp -join "`r`n")
+    Write-Host ($cmp -join "`r`n")
+    Add-Summary ('S7 [{0}] compare: {1}' -f $tag, (@($cmp | Where-Object { "$_" -like 'FAILURES:*' }) -join ''))
+  } else { Add-Summary ('S7 [{0}] compare NOT run (report found: {1}, python found: {2})' -f $tag, [bool]$rep, [bool]$py) }
+  # clean up so S5 starts on a clean machine
+  Remove-Item -LiteralPath $dd -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $ld -Recurse -Force -ErrorAction SilentlyContinue
+  Add-Summary ('S7 [{0}] cleaned up: roaming exists {1}, local exists {2}' -f $tag, (Test-Path -LiteralPath $dd), (Test-Path -LiteralPath $ld))
+}
 
 if ($Step -eq 's5') {
   $msi = Get-ChildItem -LiteralPath $MsiDir -Recurse -Filter *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -207,6 +250,17 @@ if ($Step -eq 's9') {
       if ($n -and $n.Length -ge 4 -and $txt.IndexOf($n, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += ($f.Name + ' contains a private-looking text (length ' + $n.Length + ', first chars ' + $n.Substring(0, 3) + ')') }
     }
   }
+  $pat = @{ 'at-sign' = '@'; 'digit-run-8' = '\d{8,}'; 'lid-word' = '(?i)lid'; 'trap-texts' = 'TRAPNAME|Amina|TRAPTEXT|PersonLikeFolderName|213555010203|99887766554433|sucre' }
+  $pr = @()
+  foreach ($f in @(Get-ChildItem -LiteralPath $out -Recurse -File | Where-Object { $_.Name -match 'report' })) {
+    $ln = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName)) {
+      $ln++
+      foreach ($k in $pat.Keys) { if ([regex]::IsMatch($line, $pat[$k])) { $pr += ('{0} | {1} line {2}: {3}' -f $k, $f.Name, $ln, $line) } }
+    }
+  }
+  Save-Text ($tag + '-s9-pattern-hits.txt') ("pattern hits in report files: $($pr.Count)`r`n" + ($pr -join "`r`n"))
+  Add-Summary ("S9 [{0}] pattern hits in report files (at-sign, 8+ digits, lid, trap texts): {1}" -f $tag, $pr.Count)
   Save-Text ($tag + '-s9-privacy.txt') ("hits: $($hits.Count)`r`n" + ($hits -join "`r`n"))
   Add-Summary ("S9 [{0}] privacy scan hits in stdout/stderr/report files: {1}" -f $tag, $hits.Count)
   Write-Host ("privacy scan hits: " + $hits.Count)
