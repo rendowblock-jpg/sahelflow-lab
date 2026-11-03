@@ -1,6 +1,6 @@
 # F-0010 experiment. Reads every file under the WebView2 runtime folder and/or the installed app folder completely
 # (1 MB buffer, data discarded) BEFORE the first launch, and records how long that took. Never fails the run.
-# usage: prewarm.ps1 -Mode none|webview2|app|both     -> out/prewarm.json   (mode none = context only, no file reads)
+# usage: prewarm.ps1 -Mode none|webview2|app|both|sleep     -> out/prewarm.json   (mode none = context only, no file reads)
 param([string]$Mode = 'none')
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force -Path out | Out-Null
@@ -78,6 +78,7 @@ try {
   $o.webview2Folder = $wv.dir
   $o.webview2FoundBy = $wv.how
   $o.passes = @()
+  if ($Mode -eq 'sleep') { $ssw = [Diagnostics.Stopwatch]::StartNew(); Start-Sleep -Seconds 15; $o.sleepSeconds = [math]::Round($ssw.Elapsed.TotalSeconds, 1) }  # time-only control: wait, read nothing
   if ($Mode -eq 'webview2' -or $Mode -eq 'both') {
     $a = Read-Tree 'webview2-first-pass' $wv.dir $true
     $b = Read-Tree 'webview2-second-pass' $wv.dir $false

@@ -28,7 +28,7 @@ jobs:
           echo "warm=$(node -p 'require("./runs/fl.json").warm===0?0:1')" >> "$GITHUB_OUTPUT"
           echo "skipbase=$(node -p 'require("./runs/fl.json").skipBase===1?1:0')" >> "$GITHUB_OUTPUT"
           echo "crash=$(node -p 'require("./runs/fl.json").crash===0?0:1')" >> "$GITHUB_OUTPUT"
-          PW=$(node -p 'const v=require("./runs/fl.json").prewarm; ["none","webview2","app","both"].includes(v)?v:"off"')
+          PW=$(node -p 'const v=require("./runs/fl.json").prewarm; ["none","webview2","app","both","sleep"].includes(v)?v:"off"')
           echo "prewarm=$PW" >> "$GITHUB_OUTPUT"
           echo "request: ok (prewarm=$PW)"
       - name: Lint PowerShell scripts
