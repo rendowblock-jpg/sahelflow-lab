@@ -1,7 +1,6 @@
 {
   "msi_run": 41581576590,
   "mode": "bk1",
-  "bkAt": 60,
-  "hog": 0,
+  "bkAt": 60, "bkAt2": 80, "hog": 0,
   "run": 180
 }
