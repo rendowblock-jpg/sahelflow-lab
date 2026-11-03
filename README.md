@@ -17,6 +17,13 @@
 
 Optional, only if we ask you: right after Restart (before SahelFlow is opened), run this ALONE (Start > type `powershell` > Enter, then type it): `powershell -ExecutionPolicy Bypass -File C:\sf-check\sahelflow-pc-check.ps1 -ReadWebView2`. Do not add `-Launch -Twice` to it: the read would then come after SahelFlow was started and would not be a cold read. It reads Microsoft's WebView2 files once to time the disk (10 to 60 seconds, the PC will be slow meanwhile).
 
+## Will it make my PC slow? Yes, for a few minutes - please do not work on it meanwhile
+
+- What is heavy: SahelFlow is started twice (the app is busy while it starts), and a short disk test writes about 70 MB of temporary files and deletes them. Nothing else. The heavy WebView2 read only runs if we ask you to add `-ReadWebView2`.
+- Built-in limits: each start waits at most 4 minutes and the disk test stops by itself after at most 5 minutes, so even on a very slow PC the whole check ends in about 15 minutes at the most (computed from the limits in the script; on our fast test machine one start of SahelFlow took 5 to 12 seconds). We do not know yet how long it takes on your PC.
+- Best moment: when you are not working. The PC is free again when the black window says "The check is finished".
+- If you must stop early: close the black window. Nothing is changed on your PC; at most a small folder `sahelflow-pc-check-...` stays in your temporary folder (you can delete it) and SahelFlow may still be open (close it yourself).
+
 ## What it does and does not do
 
 - It only reads: facts about the PC (Windows, processor, memory, disk type, WebView2, Defender) and two small files SahelFlow writes about its own start (`startup-trace.json`, `runtime-ui-diagnostic.json` in `%APPDATA%\com.sahelflow.desktop`).
