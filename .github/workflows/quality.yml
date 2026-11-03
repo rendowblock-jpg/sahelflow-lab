@@ -1,0 +1,122 @@
+name: quality
+# Runs the product's CI job `ci` ("Quality Gate"), the lane GitHub skips for DRAFT pull requests, on a clean ubuntu-latest runner
+# at the commit named in quality/request.json. Steps are copied from the product's .github/workflows/ci.yml (job ci).
+# Every step has continue-on-error so one run shows the whole picture; each step prints "STEP-RC <name> rc=<exit code>".
+# Started by pushing a branch q/** or by workflow_dispatch. No secrets, no artifacts (both repos are public).
+on:
+  workflow_dispatch:
+  push:
+    branches: ["q/**"]
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  quality:
+    name: Quality Gate (lab copy of product job ci)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SF_TEST_ROOT: "/tmp/sahelflow-ci-test"
+      SF_DATA_DIR: "/tmp/sahelflow-ci-test/data"
+      DATABASE_URL: "file:/tmp/sahelflow-ci-test/data/shops/test.db"
+      # product ci.yml: ${{ secrets.SF_MASTER_KEY || '<this value>' }}; the lab has no secrets, so the fallback is used
+      SF_MASTER_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    steps:
+      - name: Checkout lab (request file only)
+        uses: actions/checkout@v4
+        with:
+          path: _lab
+      - name: Read request
+        id: req
+        shell: bash
+        run: |
+          cat _lab/quality/request.json
+          echo "repo=$(node -p 'require("./_lab/quality/request.json").repo')" >> "$GITHUB_OUTPUT"
+          echo "ref=$(node -p 'require("./_lab/quality/request.json").ref')" >> "$GITHUB_OUTPUT"
+          rm -rf _lab
+      # Same checkout method as the lab's build-evidence-msi.yml (actions/checkout@v4 with repository + ref, no token),
+      # but into the workspace root like the product's own job, so setup-bun reads the product's .bun-version / packageManager.
+      - name: Check out the product at the requested commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.req.outputs.repo }}
+          ref: ${{ steps.req.outputs.ref }}
+          persist-credentials: false
+      - name: Verify the tree under test
+        shell: bash
+        env:
+          REQ: ${{ steps.req.outputs.ref }}
+        run: |
+          H=$(git rev-parse HEAD)
+          echo "product HEAD = $H"
+          echo "requested    = $REQ"
+          git log -1 --format='%h %s'
+          cat .bun-version 2>/dev/null || true
+          if [ "$H" = "$REQ" ]; then echo "CHECKOUT-MATCH yes"; else echo "CHECKOUT-MATCH NO"; exit 1; fi
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Tool versions
+        shell: bash
+        run: |
+          echo "bun $(bun --version)"; echo "node $(node --version)"; uname -a; nproc; free -m | head -2
+      - name: Install dependencies
+        continue-on-error: true
+        run: |
+          bun install --frozen-lockfile && rc=0 || rc=$?
+          echo "STEP-RC install rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Generate Prisma client
+        continue-on-error: true
+        run: |
+          bunx prisma generate && rc=0 || rc=$?
+          echo "STEP-RC prisma-generate rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Prepare disposable test sandbox
+        continue-on-error: true
+        run: |
+          bun run test:sandbox -- /tmp/sahelflow-ci-test && rc=0 || rc=$?
+          echo "STEP-RC test-sandbox rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Product, app, and runtime protocol authority (sf-version)
+        continue-on-error: true
+        run: |
+          bun run sf-version && rc=0 || rc=$?
+          echo "STEP-RC sf-version rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Documentation authority and relative-link audit (sf-audit)
+        continue-on-error: true
+        run: |
+          bun run sf-audit && rc=0 || rc=$?
+          echo "STEP-RC sf-audit rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Generate clean-checkout repository inventory (sf-inventory)
+        continue-on-error: true
+        run: |
+          bun run sf-inventory && rc=0 || rc=$?
+          echo "STEP-RC sf-inventory rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Quality gate (tsc + eslint + vitest + prisma) (sf-verify)
+        continue-on-error: true
+        run: |
+          ( set -o pipefail; bun run sf-verify 2>&1 | tee .sf-verify.log ) && rc=0 || rc=$?
+          echo "STEP-RC sf-verify rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Coverage regression gate
+        continue-on-error: true
+        run: |
+          bunx vitest run --coverage && rc=0 || rc=$?
+          echo "STEP-RC coverage rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Blocking production dependency audit
+        continue-on-error: true
+        run: |
+          bun audit --production && rc=0 || rc=$?
+          echo "STEP-RC bun-audit rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Migration status
+        continue-on-error: true
+        run: |
+          bunx prisma migrate status && rc=0 || rc=$?
+          echo "STEP-RC migrate-status rc=$rc" | tee -a "$RUNNER_TEMP/rc.txt"; exit $rc
+      - name: Summary and diagnostics (test output only)
+        if: always()
+        shell: bash
+        run: |
+          echo "=== SUMMARY OF STEP EXIT CODES ==="; cat "$RUNNER_TEMP/rc.txt" || true
+          echo "=== product HEAD ==="; git rev-parse HEAD
+          for f in .sf-verify.log .sf-vitest-first-failure.txt .sf-vitest-failures.txt; do
+            if [ -f "$f" ]; then echo "=== $f: $(wc -l < "$f") lines; tail 120 ==="; tail -n 120 "$f"; else echo "=== $f: not present ==="; fi
+          done
