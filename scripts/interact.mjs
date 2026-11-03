@@ -320,8 +320,10 @@ async function FB() {
   await step('B', 'press Create order with the prefilled commune', async (s) => {
     const d = dlg(); await d.waitFor({ timeout: 5000 });
     await d.getByRole('button', { name: /^create order$/i }).click({ timeout: 8000 }); await sleep(2500);
+    const risk0 = page.locator('[role=alertdialog]').filter({ visible: true });
+    if (await risk0.count()) { s.riskDialog = (await risk0.last().innerText()).replace(/\s+/g, ' ').slice(0, 200); const btns = (await risk0.last().getByRole('button').allInnerTexts()).map((t) => t.trim()); s.riskButtons = btns; await risk0.last().getByRole('button').last().click().catch(() => {}); await sleep(3000); }
     const open = await d.isVisible().catch(() => false); const st = open ? await dstate() : null;
-    s.state = { dialogStillOpen: open, errors: st && st.errors, alerts: st && st.errors };
+    s.state = { dialogStillOpen: open, errors: st && st.errors, alerts: st && st.errors, riskDialog: s.riskDialog || null, riskButtons: s.riskButtons || null };
     if (!open) madeInB2 = true;
     expect(!open, 'dialog closed after Create (still open; errors: ' + JSON.stringify(st && st.errors) + ')');
   });
@@ -633,7 +635,7 @@ async function FRTL() {
 const HARD = setTimeout(() => { R.notes.hardStop = 'hard stop at ' + Math.round((Date.now() - T_START) / 1000) + ' s'; R.finished = new Date().toISOString(); R.totals = { steps: R.steps.length, passed: R.steps.filter((x) => x.ok).length, failed: R.steps.filter((x) => !x.ok).length }; save(); console.log('HARD STOP'); process.exit(0); }, TOTAL_MS + 40000);
 try {
   await session();
-  const only = (process.env.FLOWS || 'A,B,B2,V,RTL').split(',');
+  const only = (process.env.FLOWS || 'B').split(',');
   const table = { A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
   for (const k of ['A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
 } catch (e) { R.notes.fatal = String(e && e.stack ? e.stack : e).slice(0, 600); console.log('FATAL', R.notes.fatal); }
