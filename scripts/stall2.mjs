@@ -3,6 +3,10 @@
 // Product data is not edited beyond what first run does. Output: out/walk-full.json, out/shots/*.jpg
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import nodePath from 'node:path';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const port = process.argv[2] || '9222';
@@ -132,17 +136,89 @@ try {
   phase = 'stall';
   // Stall probe 2: once per second fire a few requests IN PARALLEL from the page; log absolute fire/finish times.
   // STALL_MODE (runs/wp.json "mode"): plain = tiny API routes only; cod = the cod-reconciliation page + license status.
-  let mode = 'plain'; try { mode = JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')).mode || 'plain'; } catch {}
-  const targets = mode === 'pages3' ? ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'] : mode === 'cod' ? ['/accounting/cod-reconciliation', '/api/license/status'] : ['/api/license/status', '/api/orders?limit=5'];
-  out.stall = { mode, seconds: Number(process.env.STALL_SECONDS || 900), targets, samples: [] };
+  // bk1 (x13): pages3 targets + manifest + one /_next/static file + /api/health; a second probe from THIS node process (own sockets,
+  // not the page's 6-connection pool) fires 5 targets per second; POST /api/backup/create at bkAt s (and bkAt2); N hog processes (synced writes)
+  // from hogAt for hogFor seconds. Everything is logged with absolute unix ms; probe time = (t - stall.t0) / 1000.
+  let cfg = {}; try { cfg = JSON.parse(fs.readFileSync('runs/wp.json', 'utf8')); } catch {}
+  let mode = cfg.mode || 'plain';
+  const BK = mode === 'bk1';
+  let targets = mode === 'pages3' ? ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'] : mode === 'cod' ? ['/accounting/cod-reconciliation', '/api/license/status'] : ['/api/license/status', '/api/orders?limit=5'];
+  let staticUrl = null;
+  if (BK) {
+    targets = ['/accounting/cod-reconciliation', '/accounting', '/orders', '/api/license/status', '/api/orders?limit=5'];
+    staticUrl = await page.evaluate(() => { const r = performance.getEntriesByType('resource').map((e) => e.name).filter((n) => /\/_next\/static\/.+\.js/.test(n)); if (!r.length) return null; const u = new URL(r[0]); return u.pathname + u.search; }).catch(() => null);
+    if (!staticUrl) staticUrl = await page.evaluate(async () => { try { const t = await (await fetch('/orders', { cache: 'no-store' })).text(); const m = t.match(/\/_next\/static\/[^"'\\ ]+\.js/); return m ? m[0] : null; } catch { return null; } }).catch(() => null);
+    targets = [...targets, '/manifest.webmanifest', ...(staticUrl ? [staticUrl] : []), '/api/health'];
+  }
+  const stallSeconds = Number(process.env.STALL_SECONDS || (BK ? (cfg.run || 180) : 900));
+  out.stall = { mode, seconds: stallSeconds, targets, samples: [] };
   const T0 = Date.now(); out.stall.t0 = T0; const pending = [];
-  const fire = (k) => { const fired = Date.now(); return page.evaluate(async ([targets]) => {
-    const one = async (u) => { const s = performance.now(); try { const r = await fetch(u, { cache: 'no-store' }); await r.text(); return [Math.round(performance.now() - s), r.status]; } catch (e) { return [Math.round(performance.now() - s), -1]; } };
+  const fire = (k) => { const fired = Date.now(); return page.evaluate(async ([targets, rich]) => {
+    const one = async (u) => { const s = performance.now(); const abs = Math.round(performance.timeOrigin + s); try { const r = await fetch(u, { cache: 'no-store' }); await r.text(); return rich ? [Math.round(performance.now() - s), r.status, abs] : [Math.round(performance.now() - s), r.status]; } catch (e) { return rich ? [Math.round(performance.now() - s), -1, abs] : [Math.round(performance.now() - s), -1]; } };
     return Promise.all(targets.map(one));
-  }, [targets]).then((res) => { out.stall.samples.push({ k, fired, done: Date.now(), r: res }); }).catch(() => {}); };
-  for (let k = 0; Date.now() - T0 < out.stall.seconds * 1000; k++) { pending.push(fire(k)); await sleep(1000); }
+  }, [targets, BK]).then((res) => { out.stall.samples.push({ k, fired, done: Date.now(), r: res }); }).catch(() => {}); };
+  if (BK) {
+    const port = Number(new URL(origin).port);
+    const cookies = await ctx.cookies(origin).catch(() => []);
+    const cookieHdr = cookies.map((c) => c.name + '=' + c.value).join('; ');
+    out.bkx = { cookieCount: cookies.length, staticUrl, cfg: { bkAt: cfg.bkAt, bkAt2: cfg.bkAt2, hog: cfg.hog, hogAt: cfg.hogAt, hogFor: cfg.hogFor, run: cfg.run } };
+    const nodeReq = (u, method = 'GET') => new Promise((res) => {
+      const s = Date.now(); let n = 0; let ttfb = null; let done = false;
+      const fin = (st) => { if (done) return; done = true; res([Date.now() - s, st, s, n, ttfb]); };
+      const q = http.request({ host: '127.0.0.1', port, path: u, method, agent: false, headers: { Connection: 'close', Cookie: cookieHdr, 'x-requested-with': 'sahelflow' } }, (r) => {
+        ttfb = Date.now() - s; r.on('data', (c) => { n += c.length; }); r.on('end', () => fin(r.statusCode)); r.on('error', () => fin(-1));
+      });
+      q.setTimeout(120000, () => { q.destroy(); fin(-3); });
+      q.on('error', () => fin(-2)); q.end();
+    });
+    out.stallN = { targets: ['/manifest.webmanifest', ...(staticUrl ? [staticUrl] : []), '/api/health', '/api/license/status', '/api/orders?limit=5'], samples: [] };
+    const fireN = (k) => { const fired = Date.now(); return Promise.all(out.stallN.targets.map((u) => nodeReq(u))).then((res) => { out.stallN.samples.push({ k, fired, done: Date.now(), r: res }); }); };
+    out.bk = [];
+    const bkCall = (label) => {
+      const fired = Date.now();
+      return nodeReq('/api/backup/create', 'POST').then(async (r) => {
+        let via = 'node';
+        let rec = { label, via, fired, startMs: r[2], ms: r[0], status: r[1], bytes: r[3], ttfb: r[4], doneMs: r[2] + r[0] };
+        if (r[1] === 401 || r[1] === 403 || r[1] === -2) {
+          const p = await page.evaluate(async () => { const s = performance.now(); try { const x = await fetch('/api/backup/create', { method: 'POST', headers: { 'x-requested-with': 'sahelflow' } }); const t = await x.text(); return { status: x.status, bytes: t.length, ms: Math.round(performance.now() - s), startMs: Math.round(performance.timeOrigin + s) }; } catch (e) { return { status: -1, ms: Math.round(performance.now() - s), startMs: Math.round(performance.timeOrigin + s) }; } }).catch(() => ({ status: -9 }));
+          rec = { ...rec, via: 'page-fallback', nodeStatus: r[1], status: p.status, bytes: p.bytes, ms: p.ms, startMs: p.startMs, doneMs: p.startMs + p.ms };
+        }
+        out.bk.push(rec);
+      });
+    };
+    const timers = [];
+    const at = (sec, fn) => timers.push(new Promise((res) => setTimeout(() => { Promise.resolve(fn()).then(res, res); }, Math.max(0, sec * 1000 - (Date.now() - T0)))));
+    if (cfg.bkAt > 0) at(cfg.bkAt, () => bkCall('bk1'));
+    if (cfg.bkAt2 > 0) at(cfg.bkAt2, () => bkCall('bk2'));
+    if (cfg.hog > 0) {
+      const hogProcs = []; const hogDir = nodePath.join(os.tmpdir(), 'sfhog'); const hogAt = cfg.hogAt || 45; const hogFor = cfg.hogFor || 90;
+      out.hog = { n: cfg.hog, dir: hogDir, at: hogAt, for: hogFor };
+      at(hogAt, async () => {
+        try { fs.rmSync(hogDir, { recursive: true, force: true }); fs.mkdirSync(hogDir, { recursive: true }); } catch {}
+        out.hog.startMs = Date.now();
+        for (let i = 1; i <= cfg.hog; i++) {
+          try { const c = spawn('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', nodePath.resolve('scripts/hog.ps1'), '-Id', String(i), '-Dir', hogDir], { detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); hogProcs.push(c); } catch (e) { out.hog.spawnError = String(e).slice(0, 100); }
+        }
+        out.hog.spawnedMs = Date.now();
+      });
+      at(hogAt + hogFor, async () => {
+        try { fs.writeFileSync(nodePath.join(hogDir, 'stop.txt'), 'stop'); } catch {}
+        out.hog.stopMs = Date.now();
+        await sleep(6000);
+        let killed = 0; for (const c of hogProcs) { try { if (c.exitCode === null) { c.kill(); killed++; } } catch {} }
+        const per = []; try { for (const f of fs.readdirSync(hogDir)) { if (/^hog\d+\.json$/.test(f)) { try { per.push(JSON.parse(fs.readFileSync(nodePath.join(hogDir, f), 'utf8').replace(/^\uFEFF/, ''))); } catch {} } } } catch {}
+        out.hog.killed = killed; out.hog.perHog = per; out.hog.totalMB = Math.round(per.reduce((a, j) => a + (j.bytes || 0), 0) / 1048576 * 10) / 10;
+      });
+    }
+    out.stall.timers = timers.length;
+    out.stall._timers = timers;
+    out.stall._fireN = fireN;
+  }
+  for (let k = 0; Date.now() - T0 < out.stall.seconds * 1000; k++) { pending.push(fire(k)); if (BK) pending.push(out.stall._fireN(k)); await sleep(1000); }
   await Promise.all(pending);
+  if (BK) { await Promise.all(out.stall._timers); delete out.stall._timers; delete out.stall._fireN; }
   out.stall.samples.sort((a, b) => a.k - b.k);
+  if (BK) { out.stallN.samples.sort((a, b) => a.k - b.k); }
   out.ok = true; out.count = out.stall.samples.length;
   await browser.close();
 } catch (e) { out.error = String(e).slice(0, 600); }
