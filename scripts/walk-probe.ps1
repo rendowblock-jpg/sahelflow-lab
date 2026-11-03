@@ -37,8 +37,22 @@ while (((Get-Date) - $t0).TotalSeconds -lt 300) {
 }
 Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
 Start-Sleep -Seconds 3
+# a7 slow-disk SIMULATION (off unless runs/wp.json has "hog": N > 0): scripts/hog-sched.ps1 starts N hog writers hogStartS seconds after the request probe starts, stops them at hogStopS
+$hogSched = $null
+try {
+  $wpCfg = Get-Content runs/wp.json -Raw | ConvertFrom-Json
+  $hogN = 0; $hogStartS = 240; $hogStopS = 420
+  if ($wpCfg.hog) { $hogN = [int]$wpCfg.hog }
+  if ($wpCfg.hogStartS) { $hogStartS = [int]$wpCfg.hogStartS }
+  if ($wpCfg.hogStopS) { $hogStopS = [int]$wpCfg.hogStopS }
+  if ($hogN -gt 0) {
+    $hogSched = Start-Process pwsh -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/hog-sched.ps1', '-N', "$hogN", '-StartS', "$hogStartS", '-StopS', "$hogStopS") -WindowStyle Hidden -PassThru
+    Write-Host "walk: hog scheduled N=$hogN from $hogStartS s to $hogStopS s of the request probe"
+  }
+} catch { Write-Host "walk: hog setup error (ignored) $_" }
 node scripts/stall2.mjs $Port
 New-Item -ItemType File -Force -Path out/sampler.stop | Out-Null
+if ($hogSched) { try { [void]$hogSched.WaitForExit(40000) } catch {} ; try { if (-not $hogSched.HasExited) { $hogSched.Kill() } } catch {} }
 Start-Sleep -Seconds 3
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
