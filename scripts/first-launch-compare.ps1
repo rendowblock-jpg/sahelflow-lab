@@ -1,7 +1,7 @@
 # usage: first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds 2
 # One runner, alternating clean installs: base, fix, base, fix ... then a crash drill on the fix build.
 # Per variant: uninstall + wipe app data, install, launch-observe (2 launches: first and repeat), DB check. Public log: durations only.
-param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1, [int]$SkipBase = 0, [int]$Crash = 1)
+param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1, [int]$SkipBase = 0, [int]$Crash = 1, [int]$Offline = 0)
 $ErrorActionPreference = 'Continue'
 $dataRoots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
 $exe = Join-Path $env:ProgramFiles 'SahelFlow\sahelflow.exe'
@@ -39,10 +39,33 @@ function Install-Fresh([string]$msi) {
   & ./scripts/install-msi.ps1
 }
 
+
+# Offline experiment: outbound firewall rules for WebView2, the app, its node server and the sidecar, then a self-check
+# with the blocked node.exe (loopback is not filtered by the Windows firewall, so the app's own traffic is unaffected).
+function Block-Network {
+  $paths = @()
+  foreach ($root in @("${env:ProgramFiles(x86)}\Microsoft\EdgeWebView", "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate", "${env:ProgramFiles(x86)}\Microsoft\Edge")) {
+    if (Test-Path $root) { $paths += @(Get-ChildItem $root -Recurse -Include msedgewebview2.exe, MicrosoftEdgeUpdate.exe, msedge.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
+  }
+  $app = Join-Path $env:ProgramFiles 'SahelFlow'
+  if (Test-Path $app) { $paths += @(Get-ChildItem $app -Recurse -Include sahelflow.exe, node.exe, sahelflow-whatsapp.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
+  $n = 0
+  foreach ($p in ($paths | Select-Object -Unique)) {
+    try { New-NetFirewallRule -DisplayName ("lab-block-" + [IO.Path]::GetFileName($p) + "-" + $n) -Direction Outbound -Program $p -Action Block -Profile Any -ErrorAction Stop | Out-Null; $n++ } catch { Write-Host "offline: rule failed for $p" }
+  }
+  Write-Host "offline: $n outbound block rules"
+  $node = Get-ChildItem $app -Recurse -Filter node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($node) {
+    $r = & $node.FullName -e "const t=setTimeout(()=>{console.log('TIMEOUT');process.exit(0)},6000);require('https').get('https://www.microsoft.com',x=>{console.log('REACHED',x.statusCode);process.exit(0)}).on('error',e=>{console.log('BLOCKED',e.code);process.exit(0)})" 2>&1
+    Write-Host "offline: self-check from the app's node.exe -> $r"
+  }
+}
+
 function Run-Variant([string]$label, [string]$msi, [int]$launches) {
   Write-Host "variant: $label start"
   Install-Fresh $msi
   & ./scripts/disk-bench.ps1
+  if ($Offline -eq 1) { Block-Network }
   & ./scripts/launch-observe.ps1 -Launches $launches -SettleSeconds 8 -MaxSeconds 240
   Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2

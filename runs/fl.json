@@ -1,9 +1,10 @@
 {
   "baseline_run": 41409561319,
-  "fix_run": 41539952078,
+  "fix_run": 41555204026,
   "rounds": 1,
   "warm": 0,
   "skipBase": 1,
   "crash": 0,
-  "note": "one cold sample: the FIX msi is the first thing on a fresh runner; startup trace saved"
+  "offline": 1,
+  "note": "OFFLINE cold first launch of main + 658 + 659 (combo1): outbound blocked for WebView2, app, node, sidecar"
 }
