@@ -307,12 +307,13 @@ async function FB() {
     await page.getByRole('button', { name: /new order/i }).first().click();
     const d = dlg(); await d.waitFor({ timeout: 10000 });
     await d.getByRole('combobox', { name: /select a customer/i }).or(d.getByRole('combobox').first()).first().click(); await sleep(700);
+    const custOpt = (await page.getByRole('option').filter({ hasText: /Mokrani/ }).first().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 80);
     await page.getByRole('option').filter({ hasText: /Mokrani/ }).first().click({ timeout: 8000 }); await sleep(1000);
     await d.getByRole('combobox', { name: /add a product/i }).or(d.getByRole('combobox').nth(1)).first().click(); await sleep(700);
     await page.getByRole('option').first().click({ timeout: 8000 }); await sleep(900);
     const st = await dstate(); const wil = (st.combos || []).find((c) => /^\d{1,2}\s*[-\u2014\u2013]/.test(c)) || null;
     const blank = (st.combos || []).filter((c) => /^select\.\.\.$/i.test(c));
-    s.state = { totalBefore, wilayaField: wil, communeSelectText: blank.length ? blank[0] : null, blankSelects: blank.length, combos: st.combos, selects: st.selects, delivery: st.delivery };
+    s.state = { totalBefore, customerOption: custOpt, wilayaField: wil, communeSelectText: blank.length ? blank[0] : null, blankSelects: blank.length, combos: st.combos, selects: st.selects, delivery: st.delivery };
     expect(wil, 'Wilaya field filled by the customer pick');
     expect(blank.length === 0, 'Commune field filled (it shows ' + JSON.stringify(blank) + ')');
   });
@@ -327,9 +328,9 @@ async function FB() {
   await step('B', 'control: choose a commune by hand, then Create order', async (s) => {
     const d = dlg();
     if (!(await d.isVisible().catch(() => false))) { s.state = { note: madeInB2 ? 'order already created in the previous step' : 'dialog was closed' }; expect(madeInB2, 'the New order dialog was closed without an order'); return; }
-    const com = d.getByRole('combobox', { name: /^select\.\.\.$/i }).first(); expect(await com.count() > 0, 'a blank Commune select');
+    const com = d.locator('[role=combobox]').filter({ hasText: /^\s*Select\.\.\.\s*$/ }).first(); expect(await com.count() > 0, 'a blank Commune select');
     await com.click(); await sleep(600);
-    const opts = await page.getByRole('option').allInnerTexts(); s.state = { communeOptions: opts.length, first: (opts[0] || '').slice(0, 30) };
+    const opts = await page.getByRole('option').allInnerTexts(); s.state = { communeOptions: opts.length, first: (opts[0] || '').slice(0, 30), spellingsOfMsila: opts.filter((o) => /m.sila/i.test(o)).map((o) => o.trim()) };
     await page.getByRole('option').first().click({ timeout: 6000 }); await sleep(600);
     await d.getByRole('button', { name: /^create order$/i }).click({ timeout: 8000 }); await sleep(2500);
     const risk = page.locator('[role=alertdialog]').filter({ visible: true }); if (await risk.count()) { s.state.riskDialog = (await risk.last().innerText()).replace(/\s+/g, ' ').slice(0, 160); await risk.last().getByRole('button').last().click().catch(() => {}); await sleep(2000); }
