@@ -630,12 +630,55 @@ async function FRTL() {
   await step('RTL', 'restore English', async (s) => { await go('/products'); await pickLang(/english/i); const h = await html(); s.state = h; expect(h.lang === 'en', JSON.stringify(h)); }, { force: true });
 }
 
+
+// lead B (session 1), set 3b: the commune pre-fill END TO END in the packaged app: first pick -> Create (risk dialog confirmed) -> the stored order
+async function FB3() {
+  for (const nm of ['Mokrani', 'Gacem', 'Ziani']) {
+    await step('B3', 'first pick of ' + nm + ', add a product, Create order, confirm the risk dialog if shown', async (s) => {
+      await go('/orders'); s.drafts = await clearDraftsLB();
+      const totalBefore = totalOf((await apiJson('/api/orders?limit=1')).j);
+      await page.getByRole('button', { name: /new order/i }).first().click(); const d = dlg(); await d.waitFor({ timeout: 10000 });
+      await d.getByRole('combobox').first().click(); await sleep(700);
+      const opt = page.getByRole('option').filter({ hasText: new RegExp(nm) }).first();
+      const card = (await opt.innerText()).replace(/\s+/g, ' ').slice(0, 90);
+      await opt.click({ timeout: 8000 });
+      let com = null, wil = null;
+      for (let i = 0; i < 24; i++) {
+        await sleep(250);
+        const combos = (await d.locator('[role=combobox]').allInnerTexts()).map((c) => c.trim().replace(/\s+/g, ' '));
+        const wi = combos.findIndex((c) => /^\d{1,2}\s*[-\u2014\u2013]/.test(c));
+        wil = wi >= 0 ? combos[wi] : null; com = wi >= 0 ? (combos[wi + 1] ?? null) : null;
+        if (com && !/^select\.\.\.$/i.test(com)) break;
+      }
+      await d.getByRole('combobox', { name: /add a product/i }).or(d.getByRole('combobox').nth(1)).first().click(); await sleep(700);
+      await page.getByRole('option').first().click({ timeout: 8000 }); await sleep(900);
+      s.state = { card, totalBefore, wilayaShown: wil, communeShownBeforeCreate: com };
+      const pr = page.waitForResponse((r) => r.request().method() === 'POST' && /\/api\/orders(\?|$)/.test(r.url()), { timeout: 25000 }).catch(() => null);
+      await d.getByRole('button', { name: /^create order$/i }).click({ timeout: 8000 }); await sleep(2500);
+      const risk = page.locator('[role=alertdialog]').filter({ visible: true });
+      if (await risk.count()) { s.state.riskDialog = (await risk.last().innerText()).replace(/\s+/g, ' ').slice(0, 140); await risk.last().getByRole('button').last().click().catch(() => {}); }
+      const resp = await pr;
+      s.state.postStatus = resp ? resp.status() : null;
+      let j = null; try { j = resp ? await resp.json() : null; } catch {}
+      const o = j && (j.order || j);
+      s.state.stored = o ? { commune: o.commune ?? null, wilaya: o.wilaya ?? null, id: o.id ?? null } : null;
+      s.state.head = j ? JSON.stringify(j).slice(0, 200) : null;
+      await sleep(800); s.state.dialogStillOpen = await d.isVisible().catch(() => false);
+      const after = totalOf((await apiJson('/api/orders?limit=1')).j); s.state.totalAfter = after;
+      if (s.state.dialogStillOpen) { await closeDialogsLB(); }
+      expect(com && !/^select\.\.\.$/i.test(com), 'commune filled on the FIRST pick (shows ' + JSON.stringify(com) + ')');
+      expect(resp && resp.status() === 201, 'POST /api/orders answered 201 (got ' + (resp ? resp.status() : 'nothing') + ')');
+      expect(after === totalBefore + 1, 'order total +1: ' + totalBefore + ' -> ' + after);
+    }, { timeout: 60000 });
+  }
+}
+
 const HARD = setTimeout(() => { R.notes.hardStop = 'hard stop at ' + Math.round((Date.now() - T_START) / 1000) + ' s'; R.finished = new Date().toISOString(); R.totals = { steps: R.steps.length, passed: R.steps.filter((x) => x.ok).length, failed: R.steps.filter((x) => !x.ok).length }; save(); console.log('HARD STOP'); process.exit(0); }, TOTAL_MS + 40000);
 try {
   await session();
-  const only = (process.env.FLOWS || 'A,B,B2,V,RTL').split(',');
-  const table = { A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
-  for (const k of ['A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
+  const only = (process.env.FLOWS || 'B3').split(',');
+  const table = { B3: FB3, A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
+  for (const k of ['B3', 'A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
 } catch (e) { R.notes.fatal = String(e && e.stack ? e.stack : e).slice(0, 600); console.log('FATAL', R.notes.fatal); }
 clearTimeout(HARD);
 R.finished = new Date().toISOString();
