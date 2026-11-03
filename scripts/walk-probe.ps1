@@ -57,6 +57,8 @@ Start-Sleep -Seconds 3
 Get-ChildItem $dataRoots[0] -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(startup-trace|runtime-ui-diagnostic).*\.json$' } | ForEach-Object { Copy-Item $_.FullName (Join-Path 'out' $_.Name) }
 # lag (F-0016): copy the lag recorder file from either data root (the host puts SF_DATA_DIR = %APPDATA%\com.sahelflow.desktop)
 foreach ($lr in $dataRoots) { $lp = Join-Path $lr 'lagrec.jsonl'; if (Test-Path $lp) { $tag = if ($lr -eq $dataRoots[0]) { 'local' } else { 'roaming' }; Copy-Item $lp (Join-Path 'out' "lagrec-$tag.jsonl") -ErrorAction SilentlyContinue; Write-Host "walk: lagrec copied from $lr ($((Get-Item $lp).Length) bytes)" } else { Write-Host "walk: no lagrec.jsonl in $lr" } }
+# qlog (F-0016): copy the query log
+foreach ($lr in $dataRoots) { $lp = Join-Path $lr 'qlog.jsonl'; if (Test-Path $lp) { $tag = if ($lr -eq $dataRoots[0]) { 'local' } else { 'roaming' }; Copy-Item $lp (Join-Path 'out' "qlog-$tag.jsonl") -ErrorAction SilentlyContinue; Write-Host "walk: qlog copied from $lr ($((Get-Item $lp).Length) bytes)" } else { Write-Host "walk: no qlog.jsonl in $lr" } }
 Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | ForEach-Object { [void]$_.CloseMainWindow() }
 Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*SahelFlow*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 4
