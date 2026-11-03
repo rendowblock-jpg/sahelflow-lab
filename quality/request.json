@@ -1,1 +1,5 @@
-{"repo":"rendowblock-jpg/sahelflow_v2","ref":"592df10c56b05a950ac7e0f379bd57d231cdd04d","label":"final set: main + 656-662 + 664 + 665 (lab/final)"}
+{
+  "repo": "rendowblock-jpg/sahelflow_v2",
+  "ref": "ed8e5d0b87598b2e6b1e762cba3c3d3ea7f6fa4e",
+  "label": "lbx set 4b = lab/final4b (set 3b + #671 with test fix + #672)"
+}
