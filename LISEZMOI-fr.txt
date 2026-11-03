@@ -1,0 +1,11 @@
+﻿Mesurer le demarrage de SahelFlow sur votre PC (10 lignes)
+1) Copiez les 2 fichiers sahelflow-pc-check.ps1 et run-launch-twice.cmd dans un nouveau dossier C:\sf-check (le meme dossier).
+2) Demarrer > Alimentation > Redemarrer (pas "Arreter"). Quand Windows est revenu, attendez 2 minutes sans ouvrir aucun programme.
+3) Ouvrez le dossier C:\sf-check et double-cliquez sur run-launch-twice.cmd. Une fenetre noire s'ouvre.
+4) Suivez l'ecran : fermez SahelFlow completement, appuyez sur Entree ; le script lance SahelFlow lui-meme. Ne touchez pas au PC (jusqu'a 4 minutes). Il demande 3 fois de fermer SahelFlow (avant le test 1, avant le test 2, avant le test du disque).
+5) A la fin, le nom d'un fichier s'affiche : sahelflow-pc-check-NOMDUPC-date-heure.txt dans C:\sf-check. Envoyez-nous ce seul fichier (WhatsApp).
+6) Refaites le test un autre jour (Redemarrer, attendre 2 minutes).
+7) Le script lit et mesure seulement : pas d'internet, rien n'est supprime, il n'ouvre pas la base de la boutique ni les clients.
+8) Il ne mesure PAS le vrai travail du vendeur (ventes, stock, impression, WhatsApp) : seulement le demarrage.
+9) S'il ne trouve pas le fichier de demarrage : ouvrez SahelFlow une fois, attendez qu'il soit ouvert, fermez-le, relancez le test.
+10) Commande de secours : powershell -ExecutionPolicy Bypass -File C:\sf-check\sahelflow-pc-check.ps1 -Launch -Twice
