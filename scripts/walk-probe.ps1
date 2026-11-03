@@ -36,6 +36,7 @@ while (((Get-Date) - $t0).TotalSeconds -lt 300) {
 }
 Write-Host "walk: ui-ready $ready after $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)) s"
 Start-Sleep -Seconds 3
+$env:STALL_SECONDS = '40'
 node scripts/stall2.mjs $Port
 New-Item -ItemType File -Force -Path out/sampler.stop | Out-Null
 Start-Sleep -Seconds 3
