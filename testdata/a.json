@@ -1,0 +1,86 @@
+{
+  "formatVersion": 1,
+  "appVersion": "1.0.0-internal.47",
+  "events": [
+    {
+      "stage": "process-started",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684422198
+    },
+    {
+      "stage": "native-started",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684422321
+    },
+    {
+      "stage": "workspace-window-pending",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684422376
+    },
+    {
+      "stage": "migration-started",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684422408
+    },
+    {
+      "stage": "splash-painted",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684422887
+    },
+    {
+      "stage": "migration-complete",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684423887
+    },
+    {
+      "stage": "runtime-warm-started",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684423965
+    },
+    {
+      "stage": "runtime-warm-complete",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684424007
+    },
+    {
+      "stage": "runtime-prepare-started",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684424091
+    },
+    {
+      "stage": "runtime-prepare-complete",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684424107
+    },
+    {
+      "stage": "runtime-attempt-started",
+      "attempt": 1,
+      "createdAtUnixMilliseconds": 1793684424121
+    },
+    {
+      "stage": "runtime-listening",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684424692
+    },
+    {
+      "stage": "runtime-ready",
+      "attempt": 1,
+      "createdAtUnixMilliseconds": 1793684424959
+    },
+    {
+      "stage": "workspace-window-created",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684430853
+    },
+    {
+      "stage": "ui-navigation-started",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684430871
+    },
+    {
+      "stage": "ui-ready",
+      "attempt": null,
+      "createdAtUnixMilliseconds": 1793684432668
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+name: pc-check-test
+# Tests pc-check/sahelflow-pc-check.ps1 on a real Windows runner, in Windows PowerShell 5.1 and in PowerShell 7.
+# Started by pushing a branch kit/**. Output = plain artifact kit-out-<shell> (test outputs + machine facts of the runner only).
+on:
+  push:
+    branches: ["kit/**"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: S0 inventory before
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s0
+      - name: S1 parse check and PSVersionTable
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s1
+      - name: S2 trace files a b c
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s2
+      - name: S3 default run (nothing installed)
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s3
+      - name: S3b launch run with SahelFlow not installed
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s3b
+      - name: S4 read WebView2
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s4
+      - name: S5 download evidence MSI of run 41588121345
+        id: dl
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: evidence-msi-41588121345
+          run-id: 41588121345
+          github-token: ${{ github.token }}
+          path: msi
+      - name: S5 install, start, run -Launch -Twice
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s5
+      - name: S9 leftovers and privacy scan
+        if: always()
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s9
+      - name: Upload test outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-out-${{ matrix.shell }}
+          path: kitout
+          retention-days: 14
