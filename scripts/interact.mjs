@@ -500,12 +500,142 @@ async function F8() {
   });
 }
 
+// ================= leadB additions: B2 commune pre-fill for several saved customers; V validation; X export; R returns/deliveries status menus; RTL Arabic form
+async function clearDraftsLB() { return page.evaluate(() => { const gone = []; for (const st of [localStorage, sessionStorage]) for (const k of Object.keys(st)) if (/draft/i.test(k)) { gone.push(k); st.removeItem(k); } return gone; }).catch(() => []); }
+async function closeDialogsLB() {
+  for (let i = 0; i < 4; i++) {
+    const ad = page.locator('[role=alertdialog]').filter({ visible: true });
+    if (await ad.count()) { const b = ad.last().getByRole('button', { name: /discard|leave|yes|close|delete|don.t save|abandon/i }).first(); if (await b.count()) await b.click({ timeout: 3000 }).catch(() => {}); else await page.keyboard.press('Escape'); await sleep(500); continue; }
+    const d = page.locator('[role=dialog]').filter({ visible: true });
+    if (!(await d.count())) return;
+    await page.keyboard.press('Escape'); await sleep(600);
+  }
+}
+const msgsIn = (d) => d.evaluate((el) => [...el.querySelectorAll('[role=alert],[aria-invalid=true],.text-destructive,[data-slot=form-message]')].map((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 100)).filter(Boolean)).catch(() => []);
+
+async function FB2() {
+  const names = ['Mokrani', 'Gacem', 'Slimani', 'Ziani', 'Bensa', 'Brahimi', 'Maouche', 'Benyahia'];
+  for (const nm of names) {
+    await step('B2', 'saved customer ' + nm + ': commune shown after the pick', async (s) => {
+      await go('/orders'); s.drafts = await clearDraftsLB();
+      await page.getByRole('button', { name: /new order/i }).first().click(); const d = dlg(); await d.waitFor({ timeout: 10000 });
+      await d.getByRole('combobox').first().click(); await sleep(700);
+      const opt = page.getByRole('option').filter({ hasText: new RegExp(nm) }).first();
+      if (!(await opt.count())) { s.state = { note: 'no such customer in the list' }; await closeDialogsLB(); return; }
+      const card = (await opt.innerText()).replace(/\s+/g, ' ').slice(0, 90);
+      await opt.click({ timeout: 8000 });
+      const t0 = Date.now(); let wil = null, com = null, ms = null, combos = [];
+      for (let i = 0; i < 24; i++) {
+        await sleep(250);
+        combos = (await d.locator('[role=combobox]').allInnerTexts()).map((c) => c.trim().replace(/\s+/g, ' '));
+        const wi = combos.findIndex((c) => /^\d{1,2}\s*[-\u2014\u2013]/.test(c));
+        wil = wi >= 0 ? combos[wi] : null; com = wi >= 0 ? (combos[wi + 1] ?? null) : null;
+        if (com && !/^select\.\.\.$/i.test(com)) { ms = Date.now() - t0; break; }
+      }
+      s.state = { card, wilaya: wil, commune: com, filledAfterMs: ms, combos: combos.slice(0, 6) };
+      await closeDialogsLB();
+      expect(ms !== null, 'commune filled within 6 s (card: ' + card + '; wilaya: ' + wil + '; commune: ' + com + ')');
+    }, { timeout: 40000 });
+  }
+}
+
+async function FV() {
+  const tot = async (u) => totalOf((await apiJson(u)).j);
+  const prodCase = (label, name, price) => step('V', label, async (s) => {
+    await go('/products'); const before = await tot('/api/products?limit=1');
+    await page.getByRole('button', { name: /add product/i }).first().click(); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    if (name !== null) await fillLabel(d, /product name|name/i, name, 'T-shirt Cotton Bio');
+    if (price !== null) { const pl = d.getByLabel(/^price/i).first(); const f = (await pl.count()) ? pl : d.getByPlaceholder('1500').first(); await f.fill(String(price)).catch(() => {}); s.priceFieldValue = await f.inputValue().catch(() => null); }
+    await d.getByRole('button', { name: /^save$/i }).click({ timeout: 8000 }); await sleep(2500);
+    const open = await d.isVisible().catch(() => false); const msgs = open ? await msgsIn(d) : [];
+    const after = await tot('/api/products?limit=1');
+    s.state = { dialogStillOpen: open, messages: msgs, totalBefore: before, totalAfter: after };
+    await closeDialogsLB();
+    if (after !== before) { for (const r of findRecords((await apiJson('/api/products?limit=200&search=Walk V')).j, 'Walk V')) await apiJson('/api/products/' + r.id, 'DELETE'); }
+    expect(after === before, 'nothing created (total ' + before + ' -> ' + after + ')');
+    expect(open && msgs.length > 0, 'the form stays open and says why (open=' + open + ', messages=' + JSON.stringify(msgs) + ')');
+  }, { timeout: 40000 });
+  await prodCase('product with an empty name is refused with a message', null, 1000);
+  await prodCase('product with price -5 is refused with a message', 'Walk V neg price', -5);
+  await prodCase('product with price abc is refused with a message', 'Walk V abc price', 'abc');
+  const custCase = (label, name, phone) => step('V', label, async (s) => {
+    await go('/customers'); const before = await tot('/api/customers?limit=1');
+    await page.getByRole('button', { name: /new customer/i }).first().click(); const d = dlg(); await d.waitFor({ timeout: 10000 });
+    if (name !== null) await fillLabel(d, /^name/i, name, 'Ahmed Benali');
+    await d.getByPlaceholder(/05|0X|55/).first().fill(phone);
+    await d.getByRole('button', { name: /^save$/i }).click({ timeout: 8000 }); await sleep(2500);
+    const open = await d.isVisible().catch(() => false); const msgs = open ? await msgsIn(d) : [];
+    const after = await tot('/api/customers?limit=1');
+    s.state = { dialogStillOpen: open, messages: msgs, totalBefore: before, totalAfter: after };
+    await closeDialogsLB();
+    if (after !== before) { for (const r of findRecords((await apiJson('/api/customers?limit=200&search=Walk V')).j, 'Walk V')) await apiJson('/api/customers/' + r.id, 'DELETE'); }
+    expect(after === before, 'nothing created (total ' + before + ' -> ' + after + ')');
+    expect(open && msgs.length > 0, 'the form stays open and says why (open=' + open + ', messages=' + JSON.stringify(msgs) + ')');
+  }, { timeout: 40000 });
+  await custCase('customer with phone 12345 is refused with a message', 'Walk V badphone', '12345');
+  await custCase('customer with an empty name is refused with a message', null, '0555123456');
+}
+
+async function FX() {
+  await step('X', 'open /import-export and press the first Export control', async (s) => {
+    await go('/import-export'); await sleep(1000);
+    const btns = (await page.getByRole('button').allInnerTexts()).map((b) => b.trim().replace(/\s+/g, ' ').slice(0, 40)).filter(Boolean).slice(0, 30);
+    s.state = { buttons: btns };
+    const b = page.getByRole('button', { name: /export|exporter|\u062a\u0635\u062f\u064a\u0631/i }).first(); expect((await b.count()) > 0, 'an Export button exists');
+    await b.click({ timeout: 8000 }); await sleep(3500); s.state.clicked = true;
+  }, { timeout: 40000 });
+}
+
+async function FR() {
+  for (const [label, path] of [['returns', '/returns'], ['deliveries', '/deliveries']]) {
+    await step('R', label + ': open the list and use a status menu', async (s) => {
+      await go(path); await sleep(1500);
+      const rows = await page.locator('tr, [role=row]').count();
+      const trigs = page.locator('main button[aria-haspopup="menu"]').filter({ hasText: /\S/ });
+      const n = await trigs.count(); s.state = { rows, triggers: n };
+      expect(n > 0, 'a status control (menu button) exists, rows=' + rows);
+      const before = (await trigs.first().innerText()).trim().replace(/\s+/g, ' '); await trigs.first().click(); await sleep(600);
+      const items = (await page.getByRole('menuitem').allInnerTexts()).map((t) => t.trim()).filter(Boolean); s.state.before = before; s.state.menuItems = items;
+      expect(items.length > 0, 'the menu offers actions');
+      const safe = page.getByRole('menuitem').filter({ hasNotText: /delete|remove|supprimer|\u062d\u0630\u0641/i }).first();
+      s.state.chose = (await safe.innerText().catch(() => '')).trim();
+      await safe.click({ timeout: 6000 }); await sleep(2500);
+      s.state.after = (await page.locator('main button[aria-haspopup="menu"]').filter({ hasText: /\S/ }).first().innerText().catch(() => '')).trim().replace(/\s+/g, ' ');
+    }, { timeout: 45000 });
+  }
+}
+
+async function FRTL() {
+  const html = () => page.evaluate(() => ({ lang: document.documentElement.lang, dir: document.documentElement.dir }));
+  const langBtn = () => page.getByRole('button', { name: /^(English|Fran\u00e7ais|\u0627\u0644\u0639\u0631\u0628\u064a\u0629)$/ }).first();
+  const pickLang = async (label) => { await langBtn().click(); await sleep(500); await page.getByRole('menuitem', { name: label }).or(page.getByRole('option', { name: label })).or(page.getByRole('radio', { name: label })).first().click(); await sleep(1500); };
+  const token = String(Math.floor(10000 + Math.random() * 89999)); const arName = '\u0642\u0645\u064a\u0635 \u0627\u062e\u062a\u0628\u0627\u0631 ' + token;
+  await step('RTL', 'switch the interface to Arabic', async (s) => { await go('/products'); await pickLang(/\u0639\u0631\u0628/i); const h = await html(); s.state = h; expect(h.lang === 'ar' && h.dir === 'rtl', JSON.stringify(h)); });
+  await step('RTL', 'Arabic product form: dialog is rtl, Arabic name saves exactly', async (s) => {
+    await go('/products');
+    const add = page.getByRole('button', { name: /\u0625\u0636\u0627\u0641\u0629 \u0645\u0646\u062a\u062c|\u0623\u0636\u0641 \u0645\u0646\u062a\u062c|\u0645\u0646\u062a\u062c \u062c\u062f\u064a\u062f|add product/i }).first();
+    expect((await add.count()) > 0, 'an add-product button in Arabic'); await add.click({ timeout: 8000 });
+    const d = dlg(); await d.waitFor({ timeout: 10000 });
+    s.state = { dialogDir: await d.evaluate((el) => getComputedStyle(el).direction) };
+    await d.locator('input[type=text], input:not([type])').first().fill(arName);
+    const price = d.locator('input[type=number], input[inputmode=decimal], input[inputmode=numeric]').first(); if (await price.count()) await price.fill('1000').catch(() => {});
+    s.state.nameInField = await d.locator('input[type=text], input:not([type])').first().inputValue();
+    await d.getByRole('button', { name: /\u062d\u0641\u0638|save/i }).first().click({ timeout: 8000 }); await sleep(3000);
+    const recs = findRecords((await apiJson('/api/products?limit=200&search=' + encodeURIComponent(token))).j, token); s.state.found = recs.map((r) => r.name);
+    for (const r of recs) await apiJson('/api/products/' + r.id, 'DELETE');
+    await closeDialogsLB();
+    expect(s.state.dialogDir === 'rtl', 'dialog direction rtl, got ' + s.state.dialogDir);
+    expect(recs.length === 1 && recs[0].name === arName, 'the Arabic name is stored exactly: ' + JSON.stringify(s.state.found));
+  }, { timeout: 45000 });
+  await step('RTL', 'restore English', async (s) => { await go('/products'); await pickLang(/english/i); const h = await html(); s.state = h; expect(h.lang === 'en', JSON.stringify(h)); }, { force: true });
+}
+
 const HARD = setTimeout(() => { R.notes.hardStop = 'hard stop at ' + Math.round((Date.now() - T_START) / 1000) + ' s'; R.finished = new Date().toISOString(); R.totals = { steps: R.steps.length, passed: R.steps.filter((x) => x.ok).length, failed: R.steps.filter((x) => !x.ok).length }; save(); console.log('HARD STOP'); process.exit(0); }, TOTAL_MS + 40000);
 try {
   await session();
-  const only = (process.env.FLOWS || 'A,B,F1,F2,F8,F5,F6,F4,F7').split(',');
-  const table = { A: FA, B: FB, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
-  for (const k of ['A', 'B', 'F1', 'F2', 'F8', 'F5', 'F6', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
+  const only = (process.env.FLOWS || 'A,B,B2,V,X,R,RTL').split(',');
+  const table = { A: FA, B: FB, B2: FB2, V: FV, X: FX, R: FR, RTL: FRTL, F1, F2, F5, F6, F8, F4, F7 }; // F4 changes language and is restored at its end; F7 signs out, last
+  for (const k of ['A', 'B', 'B2', 'V', 'X', 'R', 'F1', 'F2', 'F8', 'F5', 'F6', 'RTL', 'F4', 'F7']) if (only.includes(k)) { try { await table[k](); } catch (e) { console.log('flow crashed', k, String(e).slice(0, 200)); R.notes['crash_' + k] = String(e).slice(0, 200); } }
 } catch (e) { R.notes.fatal = String(e && e.stack ? e.stack : e).slice(0, 600); console.log('FATAL', R.notes.fatal); }
 clearTimeout(HARD);
 R.finished = new Date().toISOString();
