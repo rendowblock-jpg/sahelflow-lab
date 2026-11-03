@@ -1,11 +1,60 @@
 # usage: first-launch-compare.ps1 -BaseDir msi-base -FixDir msi-fix -Rounds 2
 # One runner, alternating clean installs: base, fix, base, fix ... then a crash drill on the fix build.
 # Per variant: uninstall + wipe app data, install, launch-observe (2 launches: first and repeat), DB check. Public log: durations only.
-param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1, [int]$SkipBase = 0, [int]$Crash = 1, [string]$Prewarm = 'off')
+param([string]$BaseDir = 'msi-base', [string]$FixDir = 'msi-fix', [int]$Rounds = 2, [int]$Warm = 1, [int]$SkipBase = 0, [int]$Crash = 1, [string]$Prewarm = 'off', [int]$Hog = 0)
 $ErrorActionPreference = 'Continue'
 $dataRoots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
 $exe = Join-Path $env:ProgramFiles 'SahelFlow\sahelflow.exe'
 New-Item -ItemType Directory -Force -Path res | Out-Null
+
+# x11 slow-disk SIMULATION (off unless runs/fl.json has "hog": N > 0). N background processes write 64 KB blocks with write-through + flush
+# after every write to $env:TEMP (C:) until stop.txt appears. Never fails the run.
+$script:hogProcs = @()
+$script:hogDir = $null
+$script:hogStartedAt = $null
+$script:hogAliveAtBench = -1
+function Start-Hogs([int]$n) {
+  try {
+    $script:hogDir = Join-Path $env:TEMP 'sfhog'
+    if (Test-Path $script:hogDir) { Remove-Item $script:hogDir -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path $script:hogDir | Out-Null
+    $hostExe = (Get-Process -Id $PID).Path
+    $worker = (Resolve-Path ./scripts/hog.ps1).Path
+    $script:hogProcs = @()
+    $script:hogStartedAt = Get-Date
+    for ($i = 1; $i -le $n; $i++) {
+      try {
+        $p = Start-Process -FilePath $hostExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$worker`"", '-Id', "$i", '-Dir', "`"$($script:hogDir)`"") -WindowStyle Hidden -PassThru
+        $script:hogProcs += $p
+      } catch { Write-Host "hog: start $i error (ignored) $_" }
+    }
+    Write-Host "hog: started $($script:hogProcs.Count) of $n"
+  } catch { Write-Host "hog: start error (ignored) $_" }
+}
+function Count-HogsAlive { $c = 0; foreach ($p in $script:hogProcs) { try { if (-not $p.HasExited) { $c++ } } catch {} }; return $c }
+function Stop-Hogs([int]$n) {
+  try {
+    if (-not $script:hogDir) { return }
+    $aliveBefore = Count-HogsAlive
+    Set-Content -LiteralPath (Join-Path $script:hogDir 'stop.txt') -Value 'stop'
+    $t0 = Get-Date
+    while (((Get-Date) - $t0).TotalSeconds -lt 20 -and (Count-HogsAlive) -gt 0) { Start-Sleep -Milliseconds 500 }
+    $killed = 0
+    foreach ($p in $script:hogProcs) { try { if (-not $p.HasExited) { $p.Kill(); $killed++ } } catch {} }
+    $per = @(); $bytes = 0L; $writes = 0L
+    foreach ($f in @(Get-ChildItem -LiteralPath $script:hogDir -Filter 'hog*.json' -ErrorAction SilentlyContinue)) {
+      try { $j = Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json; $per += , $j; $bytes += [int64]$j.bytes; $writes += [int64]$j.writes } catch {}
+    }
+    $secs = if ($script:hogStartedAt) { [math]::Round(((Get-Date) - $script:hogStartedAt).TotalSeconds, 1) } else { 0 }
+    $o = [ordered]@{ hogRequested = $n; started = @($script:hogProcs).Count; aliveBeforeStop = $aliveBefore; aliveAtBench = $script:hogAliveAtBench; killedAtStop = $killed
+      tempDir = $script:hogDir; hogRunningSeconds = $secs; totalBytes = $bytes; totalMB = [math]::Round($bytes / 1MB, 1); totalWrites = $writes
+      avgMBps = $(if ($secs -gt 0) { [math]::Round($bytes / 1MB / $secs, 2) } else { 0 }); perHog = $per }
+    New-Item -ItemType Directory -Force -Path out | Out-Null
+    $o | ConvertTo-Json -Depth 5 | Set-Content out/hog.json
+    Write-Host "hog: stopped (alive at stop $aliveBefore, killed $killed, $($o.totalMB) MB written in $secs s = $($o.avgMBps) MB/s)"
+    $script:hogProcs = @()
+  } catch { Write-Host "hog: stop error (ignored) $_" }
+}
 
 function Find-Msi([string]$dir) { (Get-ChildItem $dir -Recurse -Filter *.msi | Select-Object -First 1).FullName }
 
@@ -43,9 +92,21 @@ function Run-Variant([string]$label, [string]$msi, [int]$launches) {
   Write-Host "variant: $label start"
   Install-Fresh $msi
   & ./scripts/disk-bench.ps1
+  # x11 slow-disk simulation (off unless runs/fl.json has "hog" > 0): start the hogs, let them run 6 s, then run the fsync bench again
+  if ($Hog -gt 0) {
+    try {
+      Start-Hogs $Hog
+      Start-Sleep -Seconds 6
+      $script:hogAliveAtBench = Count-HogsAlive
+      Write-Host "hog: alive at bench $($script:hogAliveAtBench)"
+      & ./scripts/disk-bench.ps1 -Name diskbench-hog -FsyncOnly 1
+    } catch { Write-Host "hog: bench error (ignored) $_" }
+  }
+  try {
   # F-0010 experiment (off unless runs/fl.json has "prewarm"): read the WebView2 runtime / app files before the first launch
   if ($Prewarm -ne 'off') { try { & ./scripts/prewarm.ps1 -Mode $Prewarm } catch { Write-Host "prewarm: error (ignored) $_" } }
   & ./scripts/launch-observe.ps1 -Launches $launches -SettleSeconds 8 -MaxSeconds 240
+  } finally { if ($Hog -gt 0) { Stop-Hogs $Hog } }
   Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
   python scripts/check-db.py $label | Out-File -Encoding utf8 out/dbcheck.json
