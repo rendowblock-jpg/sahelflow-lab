@@ -32,6 +32,8 @@
    2. During the disk test: temporary test files (at most about 70 MB) in a new
       folder inside your temporary folder (%TEMP%). They are deleted at the end of
       the test. This is the only thing written outside the report.
+      (Only if you start it with PowerShell 7 instead of Windows PowerShell: Windows' own
+      Defender commands may also leave a small folder remoteIpMoProxy_... in %TEMP%.)
 
  WHAT IT STARTS
    Only with -Launch: it starts SahelFlow (like a double click) and watches the
@@ -887,7 +889,7 @@ Add-Line ''
 Add-Line '== RESULT =='
 foreach ($r in $recs) { Add-Line ('{0,-20}: {1}' -f $r.Label, $r.Verdict) }
 if ($readOnlyNote) { Add-Line $readOnlyNote }
-if ($recs.Count -gt 0 -and $recs[0].Label -like 'Launch 1*') {
+if ($recs.Count -gt 0 -and $recs[0].Label -like 'Launch 1*' -and $recs[0].Started) {
   Add-Line 'Launch 1 is the COLD number only if Windows was restarted a few minutes before.'
   if ($recs.Count -gt 1) { Add-Line 'Launch 2 is the WARM number (files already in memory).' }
 }

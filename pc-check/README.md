@@ -10,12 +10,12 @@
 2. Click Start > Power > **Restart** (not "Shut down"; Windows keeps old state after "Shut down"). After Windows is back, **wait 2 minutes** and open nothing else. Do not open SahelFlow.
 3. Open the folder `C:\sf-check` and **double-click `run-launch-twice.cmd`**. A black window opens. If Windows shows a warning about the file, choose More info > Run anyway (the file only reads and measures; see the top of `sahelflow-pc-check.ps1`).
    (Backup way: Start > type `powershell` > Enter, then type: `powershell -ExecutionPolicy Bypass -File C:\sf-check\sahelflow-pc-check.ps1 -Launch -Twice`)
-4. Follow the screen. It asks you to close SahelFlow, press Enter, then it starts SahelFlow itself and waits (up to 4 minutes; do not touch the PC). When it says "ready", close SahelFlow when asked and press Enter. This happens twice. Then a disk test runs (one to two minutes).
+4. Follow the screen. Three times it asks you to close SahelFlow (click the X) and press Enter: before launch 1, before launch 2, and before the disk test. After the first two Enters it starts SahelFlow itself and waits (up to 4 minutes; do not touch the PC) until it says "ready". Then the disk test runs (10 seconds to 2 minutes).
 5. At the end it prints the name of the report file: `sahelflow-pc-check-<computername>-<date>-<time>.txt` in `C:\sf-check`. **Send us only this one file** (WhatsApp).
 
 **Run it a second time later** (another day, again after Restart + 2 minutes), so we have two readings.
 
-Optional, only if we ask you: add `-ReadWebView2` at the end of the typed command. It reads Microsoft's WebView2 files once to time the disk (10 to 60 seconds, the PC will be slow meanwhile). Run it right after Restart, without opening SahelFlow first.
+Optional, only if we ask you: right after Restart (before SahelFlow is opened), run this ALONE (Start > type `powershell` > Enter, then type it): `powershell -ExecutionPolicy Bypass -File C:\sf-check\sahelflow-pc-check.ps1 -ReadWebView2`. Do not add `-Launch -Twice` to it: the read would then come after SahelFlow was started and would not be a cold read. It reads Microsoft's WebView2 files once to time the disk (10 to 60 seconds, the PC will be slow meanwhile).
 
 ## What it does and does not do
 

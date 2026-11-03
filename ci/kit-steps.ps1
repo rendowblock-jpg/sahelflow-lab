@@ -55,6 +55,40 @@ function Invoke-Check([string]$Name, [string]$ScriptArgs, [int]$TimeoutSec = 600
   Copy-NewReports $Name $before
 }
 
+$watch = {
+  param([int]$MaxSec, [int64]$StartMs)
+  $roots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
+  $seen = @{}
+  $closed = 0
+  $log = @()
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt $MaxSec -and $closed -lt 2) {
+    foreach ($r in $roots) {
+      $p = Join-Path $r 'startup-trace.json'
+      if (Test-Path -LiteralPath $p) {
+        try {
+          $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+          $ev = @($j.events)
+          if ($ev.Count -gt 0 -and [int64]$ev[0].createdAtUnixMilliseconds -ge $StartMs) {
+            $first = [string]$ev[0].createdAtUnixMilliseconds
+            $ready = (@($ev | Where-Object { $_.stage -eq 'ui-ready' -or $_.stage -eq 'ui-blocked' }).Count -gt 0)
+            if ($ready -and -not $seen.ContainsKey($first)) {
+              $seen[$first] = $true
+              Start-Sleep -Seconds 2
+              Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              $closed++
+              $log += ('watcher: closed the app after launch with first event ' + $first + ', watcher clock ' + [math]::Round($sw.Elapsed.TotalSeconds, 1) + ' s')
+            }
+          }
+        } catch { }
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  $log += ('watcher: ended, closed ' + $closed)
+  return $log
+}
+
 Write-Host ("step {0}, shell {1}, PowerShell {2}" -f $Step, $tag, $PSVersionTable.PSVersion)
 
 if ($Step -eq 's0') {
@@ -95,7 +129,7 @@ if ($Step -eq 's5') {
   $msi = Get-ChildItem -LiteralPath $MsiDir -Recurse -Filter *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $msi) { Add-Summary 'S5 SKIPPED: no msi downloaded'; Write-Host 'no msi'; exit 0 }
   $t0 = Get-Date
-  $ip = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi.FullName + '"'), '/qn', '/norestart', '/l*v', ('"' + (Join-Path $out 'msi-install.log') + '"')) -Wait -PassThru
+  $ip = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi.FullName + '"'), '/qn', '/norestart', '/l*v', ('"' + (Join-Path $env:RUNNER_TEMP 'kit-msi-install.log') + '"')) -Wait -PassThru
   Add-Summary ('S5 msi install exit ' + $ip.ExitCode + ' in ' + [math]::Round(((Get-Date) - $t0).TotalSeconds, 1) + ' s; msi ' + $msi.Name + ' ' + $msi.Length + ' bytes')
   $exe = Join-Path $env:ProgramFiles 'SahelFlow\sahelflow.exe'
   if (-not (Test-Path -LiteralPath $exe)) { Add-Summary 'S5 FAILED: exe missing after install'; exit 0 }
@@ -107,40 +141,8 @@ if ($Step -eq 's5') {
     try { $hh = Invoke-RestMethod 'http://127.0.0.1:8787/health' -TimeoutSec 3; $issuerUp = [bool]$hh.ok } catch { }
   }
   Add-Summary ('S5 trial issuer file found: ' + [bool]$issuer + '; issuer up: ' + $issuerUp)
-  $watch = {
-    param([int]$MaxSec)
-    $roots = @((Join-Path $env:LOCALAPPDATA 'com.sahelflow.desktop'), (Join-Path $env:APPDATA 'com.sahelflow.desktop'))
-    $seen = @{}
-    $closed = 0
-    $log = @()
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    while ($sw.Elapsed.TotalSeconds -lt $MaxSec -and $closed -lt 2) {
-      foreach ($r in $roots) {
-        $p = Join-Path $r 'startup-trace.json'
-        if (Test-Path -LiteralPath $p) {
-          try {
-            $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
-            $ev = @($j.events)
-            if ($ev.Count -gt 0) {
-              $first = [string]$ev[0].createdAtUnixMilliseconds
-              $ready = (@($ev | Where-Object { $_.stage -eq 'ui-ready' -or $_.stage -eq 'ui-blocked' }).Count -gt 0)
-              if ($ready -and -not $seen.ContainsKey($first)) {
-                $seen[$first] = $true
-                Start-Sleep -Seconds 4
-                Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                $closed++
-                $log += ('watcher: closed the app after launch with first event ' + $first + ', watcher clock ' + [math]::Round($sw.Elapsed.TotalSeconds, 1) + ' s')
-              }
-            }
-          } catch { }
-        }
-      }
-      Start-Sleep -Milliseconds 500
-    }
-    $log += ('watcher: ended, closed ' + $closed)
-    return $log
-  }
-  $job = Start-Job -ScriptBlock $watch -ArgumentList 700
+  $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $job = Start-Job -ScriptBlock $watch -ArgumentList 700, $startMs
   Invoke-Check 's5-launch-twice' '-Launch -Twice -NoPause -NoPrompt' 720
   Start-Sleep -Seconds 3
   $wl = @(Receive-Job -Job $job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue)
@@ -152,6 +154,35 @@ if ($Step -eq 's5') {
   }
   $left = @(Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue)
   Add-Summary ('S5 processes still running after the run: ' + $left.Count)
+  $left | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+if ($Step -eq 's6') {
+  $cmdFile = Join-Path $pcDir 'run-launch-twice.cmd'
+  $before = @(Get-ChildItem -LiteralPath $pcDir -Filter 'sahelflow-pc-check-*.txt' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+  $startMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $job = Start-Job -ScriptBlock $watch -ArgumentList 400, $startMs
+  $so = Join-Path $out 's6-cmd.stdout.txt'
+  $se = Join-Path $out 's6-cmd.stderr.txt'
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $p = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/d /s /c ""' + $cmdFile + '" < NUL"') -PassThru -NoNewWindow -RedirectStandardOutput $so -RedirectStandardError $se
+  $h = $p.Handle
+  $done = $p.WaitForExit(420000)
+  if (-not $done) { try { $p.Kill() } catch { } }
+  $code = 'timeout'
+  if ($done) { $code = "$($p.ExitCode)" }
+  Add-Summary ('S6 run-launch-twice.cmd (stdin NUL, powershell.exe 5.1 inside) exit ' + $code + ' | ' + [math]::Round($sw.Elapsed.TotalSeconds, 1) + ' s | stdout ' + (Get-Item -LiteralPath $so).Length + ' bytes | stderr ' + (Get-Item -LiteralPath $se).Length + ' bytes')
+  Write-Host '===== s6 cmd stdout ====='
+  Get-Content -LiteralPath $so -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+  Write-Host '===== s6 cmd stderr ====='
+  Get-Content -LiteralPath $se -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+  Copy-NewReports 's6-cmd' $before
+  Start-Sleep -Seconds 3
+  $wl = @(Receive-Job -Job $job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue)
+  Save-Text 's6-watcher-log.txt' ($wl -join "`r`n")
+  Write-Host ($wl -join "`r`n")
+  $left = @(Get-Process -Name sahelflow, sahelflow-whatsapp -ErrorAction SilentlyContinue)
+  Add-Summary ('S6 processes still running after the run: ' + $left.Count)
   $left | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 

@@ -50,6 +50,9 @@ jobs:
       - name: S5 install, start, run -Launch -Twice
         continue-on-error: true
         run: ./ci/kit-steps.ps1 -Step s5
+      - name: S6 shipped run-launch-twice.cmd with stdin NUL
+        continue-on-error: true
+        run: ./ci/kit-steps.ps1 -Step s6
       - name: S9 leftovers and privacy scan
         if: always()
         continue-on-error: true
