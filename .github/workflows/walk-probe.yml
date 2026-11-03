@@ -49,6 +49,8 @@ jobs:
       - name: Probe
         shell: pwsh
         run: ./scripts/walk-probe.ps1 -MsiDir msi-base
+        env:
+          STALL_SECONDS: "60"
       - name: Pack and encrypt results
         if: always()
         run: bash scripts/pack-encrypt.sh
