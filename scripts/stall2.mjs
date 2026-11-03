@@ -192,20 +192,39 @@ try {
     if (cfg.bkAt2 > 0) at(cfg.bkAt2, () => bkCall('bk2'));
     if (cfg.hog > 0) {
       const hogProcs = []; const hogDir = nodePath.join(os.tmpdir(), 'sfhog'); const hogAt = cfg.hogAt || 45; const hogFor = cfg.hogFor || 90;
-      out.hog = { n: cfg.hog, dir: hogDir, at: hogAt, for: hogFor };
+      const hogScript = nodePath.resolve('scripts/hog.ps1');
+      out.hog = { n: cfg.hog, dir: hogDir, at: hogAt, for: hogFor, exits: [], logs: [] };
+      const psq = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+      const binCount = () => { try { return fs.readdirSync(hogDir).filter((f) => /^hog\d+\.bin$/.test(f)).length; } catch { return 0; } };
       at(hogAt, async () => {
         try { fs.rmSync(hogDir, { recursive: true, force: true }); fs.mkdirSync(hogDir, { recursive: true }); } catch {}
         out.hog.startMs = Date.now();
+        // method A: plain child processes (not detached: DETACHED_PROCESS can make pwsh exit at once), stdout/stderr kept
         for (let i = 1; i <= cfg.hog; i++) {
-          try { const c = spawn('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', nodePath.resolve('scripts/hog.ps1'), '-Id', String(i), '-Dir', hogDir], { detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); hogProcs.push(c); } catch (e) { out.hog.spawnError = String(e).slice(0, 100); }
+          try {
+            const c = spawn('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', hogScript, '-Id', String(i), '-Dir', hogDir], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+            let lg = ''; c.stdout.on('data', (b) => { if (lg.length < 400) lg += b.toString(); }); c.stderr.on('data', (b) => { if (lg.length < 400) lg += b.toString(); });
+            c.on('error', (e) => { out.hog.exits.push({ i, error: String(e).slice(0, 160), t: Date.now() }); });
+            c.on('exit', (code, sig) => { out.hog.exits.push({ i, code, sig, t: Date.now(), log: lg.slice(0, 300) }); });
+            hogProcs.push(c);
+          } catch (e) { out.hog.spawnError = String(e).slice(0, 100); }
         }
         out.hog.spawnedMs = Date.now();
+        await sleep(6000);
+        out.hog.binsAfterA = binCount(); out.hog.method = 'A';
+        if (out.hog.binsAfterA < cfg.hog) {
+          // method B (the one the x11 lab used): Start-Process from a pwsh, hidden windows
+          const cmd = '1..' + cfg.hog + ' | ForEach-Object { Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @(\'-NoProfile\',\'-ExecutionPolicy\',\'Bypass\',\'-File\',(\'"\' + ' + psq(hogScript) + ' + \'"\'),\'-Id\',"$_",\'-Dir\',(\'"\' + ' + psq(hogDir) + ' + \'"\')) -WindowStyle Hidden }';
+          try { const b = spawn('pwsh', ['-NoProfile', '-Command', cmd], { stdio: 'ignore', windowsHide: true }); b.on('error', (e) => { out.hog.bError = String(e).slice(0, 160); }); out.hog.method = 'A+B'; } catch (e) { out.hog.bError = String(e).slice(0, 160); }
+          await sleep(6000); out.hog.binsAfterB = binCount();
+        }
       });
       at(hogAt + hogFor, async () => {
         try { fs.writeFileSync(nodePath.join(hogDir, 'stop.txt'), 'stop'); } catch {}
         out.hog.stopMs = Date.now();
         await sleep(6000);
         let killed = 0; for (const c of hogProcs) { try { if (c.exitCode === null) { c.kill(); killed++; } } catch {} }
+        try { spawn('pwsh', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='pwsh.exe'\" | Where-Object { $_.CommandLine -like '*hog.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"], { stdio: 'ignore', windowsHide: true }); } catch {}
         const per = []; try { for (const f of fs.readdirSync(hogDir)) { if (/^hog\d+\.json$/.test(f)) { try { per.push(JSON.parse(fs.readFileSync(nodePath.join(hogDir, f), 'utf8').replace(/^\uFEFF/, ''))); } catch {} } } } catch {}
         out.hog.killed = killed; out.hog.perHog = per; out.hog.totalMB = Math.round(per.reduce((a, j) => a + (j.bytes || 0), 0) / 1048576 * 10) / 10;
       });
